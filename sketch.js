@@ -520,14 +520,6 @@ function drawTrackChars() {
       endShape();
     }
 
-    // 元の文字も薄く描画
-    fill(0, 40);
-    noStroke();
-    textSize(c.size);
-    textAlign(CENTER, CENTER);
-    textFont(p5Font);
-    text(c.ch, 0, 0);
-
     pop();
   }
 }
