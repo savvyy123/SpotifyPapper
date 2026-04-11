@@ -484,44 +484,55 @@ const WAVE_HEIGHT = 4;       // 波の振幅
 const WAVE_RES = 30;         // 波の解像度
 
 function drawTrackChars() {
-  if (!p5Font) return;
+  if (!p5Font || trackChars.length === 0) return;
 
   waveT += 0.02;
   const bpm = Spotify.getBPM() || 120;
   const bpmWave = WAVE_HEIGHT * (bpm / 120);
 
+  // 全文字のアウトライン点をワールド座標に変換して連結
+  let allPoints = [];
   for (const c of trackChars) {
-    // 原点(0,0)で文字のアウトライン点群を取得
     const pts = p5Font.textToPoints(c.ch, 0, 0, c.size, { sampleFactor: 0.22 });
     if (pts.length === 0) continue;
 
-    // 文字の中心を求めてオフセット
     const bounds = p5Font.textBounds(c.ch, 0, 0, c.size);
     const cx = bounds.x + bounds.w / 2;
     const cy = bounds.y + bounds.h / 2;
 
-    push();
-    translate(c.x, c.y);
-    rotate(c.angle);
-
-    // 波線エフェクト
-    noFill();
-    strokeWeight(1 * s);
-    for (let n = 0; n < WAVE_NUM_LINES; n++) {
-      stroke(artColor[0], artColor[1], artColor[2], 60 + n * 20);
-      beginShape();
-      for (let j = 0; j < pts.length; j++) {
-        const p = pts[j];
-        const wave = sin((j / WAVE_RES) * PI * WAVE_FREQ + waveT + n * 0.5) * bpmWave;
-        const px = (p.x - cx) + cos(n * 0.3) * wave;
-        const py = (p.y - cy) + sin(n * 0.3) * wave;
-        curveVertex(px, py);
-      }
-      endShape();
+    for (const p of pts) {
+      // 中心基準にしてから回転→文字位置に移動
+      let lx = p.x - cx;
+      let ly = p.y - cy;
+      const cosA = cos(c.angle);
+      const sinA = sin(c.angle);
+      const rx = lx * cosA - ly * sinA;
+      const ry = lx * sinA + ly * cosA;
+      allPoints.push({ x: c.x + rx, y: c.y + ry });
     }
-
-    pop();
   }
+
+  if (allPoints.length === 0) return;
+
+  // 連結した点群を波線で描画
+  push();
+  noFill();
+  strokeWeight(1 * s);
+
+  for (let n = 0; n < WAVE_NUM_LINES; n++) {
+    stroke(artColor[0], artColor[1], artColor[2], 60 + n * 20);
+    beginShape();
+    for (let j = 0; j < allPoints.length; j++) {
+      const p = allPoints[j];
+      const wave = sin((j / WAVE_RES) * PI * WAVE_FREQ + waveT + n * 0.5) * bpmWave;
+      const px = p.x + cos(n * 0.3) * wave;
+      const py = p.y + sin(n * 0.3) * wave;
+      curveVertex(px, py);
+    }
+    endShape();
+  }
+
+  pop();
 }
 
 // ---------------------------------------------------------------
