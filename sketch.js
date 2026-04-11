@@ -490,7 +490,9 @@ function generateTrackChars(track) {
   const artBottom = (H + artSize) / 2 + margin;
 
   for (const ch of track) {
-    const sz = random(32, 120);
+    const szMin = 32 * max(1, s * 1.2);
+    const szMax = 120 * max(1, s * 1.2);
+    const sz = random(szMin, szMax);
     textSize(sz);
     const cw = textWidth(ch);
 
@@ -740,8 +742,8 @@ function drawLyrics() {
   const lineCount = lines.length;
 
   // 全行が画面に収まるように行間を計算し、フォントサイズも調整
-  const leading = min(44, availH / max(lineCount, 1));
-  const sz = min(28, leading * 0.65);
+  const leading = min(48, availH / max(lineCount, 1));
+  const sz = min(34, leading * 0.7);
 
   // 全体の高さから開始Y位置を算出して上下中央揃え
   const totalH = lineCount * leading;
