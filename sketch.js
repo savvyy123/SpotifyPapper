@@ -626,7 +626,13 @@ function drawTrackChars() {
   noFill();
   strokeWeight(1.5 * s);
 
+  // 線が多いほどうねりが大きくなる（テンションが緩む）
+  const waveLoose = max(0, numLines - 2) * 3 * s;
+
   for (let n = 0; n < numLines; n++) {
+    // n 番目の線の基本オフセット
+    const baseOff = (n - (numLines - 1) / 2) * 2 * s;
+
     for (let si = 0; si < charSegments.length; si++) {
       const seg = charSegments[si];
       const nextSeg = charSegments[(si + 1) % charSegments.length];
@@ -639,12 +645,16 @@ function drawTrackChars() {
         const r = lerp(c1[0], c2[0], t);
         const g = lerp(c1[1], c2[1], t);
         const b = lerp(c1[2], c2[2], t);
-        stroke(r, g, b, 140 + n * 20);
+        stroke(r, g, b, 140 + n * 15);
 
-        // 複数本は少しオフセットして描画
-        const lineOff = (n - (numLines - 1) / 2) * 1.5 * s;
-        line(pts[j].x + lineOff, pts[j].y + lineOff,
-             pts[j + 1].x + lineOff, pts[j + 1].y + lineOff);
+        // Sin波のうねり: 線が増えるほど振幅が大きくなる
+        const wave1 = sin((j / 20) * PI + waveT + n * 0.8) * waveLoose;
+        const wave2 = sin((j / 12) * PI * 0.7 + waveT * 0.6 + n) * waveLoose * 0.4;
+        const wx = wave1 + wave2;
+        const wy = cos((j / 18) * PI + waveT + n * 0.6) * waveLoose * 0.7;
+
+        line(pts[j].x + baseOff + wx, pts[j].y + baseOff + wy,
+             pts[j + 1].x + baseOff + wx, pts[j + 1].y + baseOff + wy);
       }
 
       // 次の文字への接続線
@@ -652,17 +662,17 @@ function drawTrackChars() {
         const from = pts[pts.length - 1];
         const to = nextSeg.points[0];
         const steps = 20;
-        const lineOff = (n - (numLines - 1) / 2) * 1.5 * s;
         for (let j = 0; j < steps; j++) {
           const t = j / steps;
           const r = lerp(c1[0], c2[0], t);
           const g = lerp(c1[1], c2[1], t);
           const b = lerp(c1[2], c2[2], t);
-          stroke(r, g, b, (140 + n * 20) * (1 - t * 0.5));
-          const x1 = lerp(from.x, to.x, t) + lineOff;
-          const y1 = lerp(from.y, to.y, t) + lineOff;
-          const x2 = lerp(from.x, to.x, (j + 1) / steps) + lineOff;
-          const y2 = lerp(from.y, to.y, (j + 1) / steps) + lineOff;
+          stroke(r, g, b, (140 + n * 15) * (1 - t * 0.5));
+          const connWave = sin((j / 5) * PI + waveT + n * 0.8) * waveLoose;
+          const x1 = lerp(from.x, to.x, t) + baseOff + connWave;
+          const y1 = lerp(from.y, to.y, t) + baseOff;
+          const x2 = lerp(from.x, to.x, (j + 1) / steps) + baseOff + connWave;
+          const y2 = lerp(from.y, to.y, (j + 1) / steps) + baseOff;
           line(x1, y1, x2, y2);
         }
       }
