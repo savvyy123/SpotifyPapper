@@ -149,17 +149,10 @@ function windowResized() {
 function draw() {
   updateSpotifyTrack();
   if (Spotify.getIsPlaying()) {
-    updateWalker();
     updateBeatGlitch();
   }
 
   background(255);
-
-  // 1. 背景の線（Perlin noise で描画位置を微かに揺らす）
-  const nt = millis() / 1000.0;
-  const shiftX = (noise(nt * 0.3, 0) - 0.5) * 6 * s;
-  const shiftY = (noise(0, nt * 0.3) - 0.5) * 6 * s;
-  image(lineFbo, shiftX, shiftY);
 
   // 2. アルバムアート（中央）
   drawArtNormal();
