@@ -772,7 +772,7 @@ function drawLyrics() {
     const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
     brightnessSum += (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
   }
-  const textColor = (brightnessSum / xCols) < 128 ? 255 : 0;
+  const textColor = (brightnessSum / xCols) < 160 ? 255 : 0;
 
   fill(textColor, lerp(0, 255, easedT));
   text(currentText, W / 2, H / 2);
