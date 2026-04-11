@@ -15,8 +15,8 @@ const FONT_FAMILY    = 'Noto Sans JP';
 const LYRICS_FONT    = 'KazukiReiwa';
 
 // BPM グリッチ設定
-const GLITCH_CHANCE      = 0.15;  // 各拍でグリッチが発動する確率
-const GLITCH_DOWNBEAT    = 0.35;  // 強拍（1拍目）の発動確率
+const GLITCH_CHANCE      = 0.035; // 各拍でグリッチが発動する確率
+const GLITCH_DOWNBEAT    = 0.09;  // 強拍（1拍目）の発動確率
 const GLITCH_DURATION_MS = 180;   // グリッチ表示の持続時間 (ms)
 
 // 基準解像度（スケール計算用）
@@ -47,16 +47,22 @@ let lineFbo;
 let walkerPos;
 let walkerPrev;
 let walkerPrevPrev;   // 2フレーム前の位置（曲率計算用）
-let walkerWeight = 0; // 現在の線の太さ（スムージング用）
-let walkerTime = 0;   // 可変速度の時間アキュムレータ
-let walkerCurve = 0;  // スムージングされた曲率
+let walkerWeight = 0;  // 現在の線の太さ（スムージング用）
+let walkerTime = 0;    // 可変速度の時間アキュムレータ
+let walkerCurve = 0;   // スムージングされた曲率
 let walkerOffsetX = 0; // テキスト回避オフセット
 let walkerOffsetY = 0;
+let walkerCharIdx = 0;      // 現在向かっている文字のインデックス
+let walkerOrbitAngle = 0;
+let walkerTargetX = 0;
+let walkerTargetY = 0;
+let walkerCharTime = 0;    // 現在の文字に向かい始めた時刻
 let albumArt;
 let lastArtUrl = '';
 let artCanvas;
 let artCtx;
-let artIsDark = false; // アルバムアートが暗いかどうか
+let artIsDark = false;   // アルバムアートが暗いかどうか
+let artColor = [0, 0, 0]; // ジャケットから抽出した線の色
 
 let trackChars = [];
 let lastTrack  = '';
@@ -69,6 +75,8 @@ let beatCount    = 0;
 let glitchActive = false;
 let glitchStart  = 0;
 let glitchType   = 0;    // 0: 縦線 1: 横線 2: RGBずれ
+const SCAN_GRID = 4;  // グリッド分割数 (4×4 = 16ブロック)
+let scanBlocks = [];  // エフェクト対象ブロックのインデックス
 
 // 縦横スキャンの蓄積レイヤー
 let scanFbo;
@@ -199,47 +207,19 @@ function draw() {
 // Walker
 // ---------------------------------------------------------------
 function updateWalker() {
-  // 前フレームの曲率から速度を決定（曲がる→極端に減速、直線→やや速い）
-  const speedMult = lerp(1.2, 0.03, walkerCurve);
-  walkerTime += (deltaTime / 1000.0) * speedMult;
+  const bpm = Spotify.getBPM() || 120;
+  const bpmSpeed = bpm / 120;
+  const dt = deltaTime / 1000.0;
 
   walkerPrevPrev = walkerPrev.copy();
   walkerPrev = walkerPos.copy();
 
-  const baseX = map(noise(walkerTime * LINE_SPEED),       0, 1, 0, W);
-  const baseY = map(noise(walkerTime * LINE_SPEED + 1000), 0, 1, 0, H);
+  // 前フレームの曲率から速度を決定（曲がる→極端に減速、直線→やや速い）
+  const curveMult = lerp(1.2, 0.03, walkerCurve);
+  walkerTime += dt * bpmSpeed * curveMult;
 
-  // 歌詞テキストからの反発力を計算
-  let targetOX = 0, targetOY = 0;
-  if (Lyrics.hasLyrics()) {
-    const lyLines = Lyrics.getLines();
-    const lineCount = lyLines.length;
-    const margin = 30;
-    const availH = H - margin * 2;
-    const leading = min(34, availH / max(lineCount, 1));
-    const sz = min(24, leading * 0.75);
-    const totalH = lineCount * leading;
-    const startY = (H - totalH) / 2;
-    const repelRadius = leading * 1.5;
-
-    for (let i = 0; i < lineCount; i++) {
-      const ly = startY + i * leading + sz / 2;
-      const lx = W / 2;
-      const dx = baseX - lx;
-      const dy = baseY - ly;
-      const dist = sqrt(dx * dx + dy * dy);
-      if (dist < repelRadius && dist > 0.1) {
-        const strength = pow(1 - dist / repelRadius, 2) * leading * 0.6;
-        targetOX += (dx / dist) * strength;
-        targetOY += (dy / dist) * strength;
-      }
-    }
-  }
-  walkerOffsetX = lerp(walkerOffsetX, targetOX, 0.08);
-  walkerOffsetY = lerp(walkerOffsetY, targetOY, 0.08);
-
-  walkerPos.x = constrain(baseX + walkerOffsetX, 0, W);
-  walkerPos.y = constrain(baseY + walkerOffsetY, 0, H);
+  walkerPos.x = map(noise(walkerTime * LINE_SPEED),       0, 1, 0, W);
+  walkerPos.y = map(noise(walkerTime * LINE_SPEED + 1000), 0, 1, 0, H);
 
   // 曲率を計算してスムージング
   const d1 = p5.Vector.sub(walkerPrev, walkerPrevPrev);
@@ -258,7 +238,7 @@ function updateWalker() {
   walkerWeight = lerp(walkerWeight, targetWeight, 0.15);
   const weight = walkerWeight;
 
-  lineFbo.stroke(0);
+  lineFbo.stroke(artColor[0], artColor[1], artColor[2]);
   lineFbo.strokeWeight(weight);
   lineFbo.line(walkerPrev.x, walkerPrev.y, walkerPos.x, walkerPos.y);
 }
@@ -290,17 +270,34 @@ function updateBeatGlitch() {
     if (random() < chance) {
       glitchActive = true;
       glitchStart = now;
-      // 縦横スキャンが多め、RGBずれはたまに
       const r = random();
-      if (r < 0.45) glitchType = 0;       // 縦線 45%
-      else if (r < 0.90) glitchType = 1;  // 横線 45%
-      else glitchType = 2;                // RGBずれ 10%
+      if (r < 0.45) glitchType = 0;       // 縦線 全体 45%
+      else if (r < 0.90) glitchType = 1;  // 横線 全体 45%
+      else if (r < 0.97) glitchType = 3;  // 部分ブロック 7%
+      else glitchType = 2;                // RGBずれ 3%
 
       // 縦横スキャンのときは蓄積レイヤーを有効化
-      if (glitchType <= 1) {
+      if (glitchType <= 1 || glitchType === 3) {
         scanFbo.clear();
         scanFadeAlpha = 255;
         scanFboActive = true;
+
+        if (glitchType === 3) {
+          // 部分エフェクト: ブロック分割で 1/4 or 3/4
+          glitchType = floor(random(2)); // 縦or横をランダム
+          const total = SCAN_GRID * SCAN_GRID;
+          const useCount = random() < 0.5 ? floor(total / 4) : floor(total * 3 / 4);
+          const indices = Array.from({ length: total }, (_, i) => i);
+          for (let k = indices.length - 1; k > 0; k--) {
+            const j = floor(random(k + 1));
+            [indices[k], indices[j]] = [indices[j], indices[k]];
+          }
+          scanBlocks = new Set(indices.slice(0, useCount));
+        } else {
+          // 全体エフェクト: 全ブロック有効
+          const total = SCAN_GRID * SCAN_GRID;
+          scanBlocks = new Set(Array.from({ length: total }, (_, i) => i));
+        }
       }
     }
   }
@@ -315,6 +312,8 @@ function updateSpotifyTrack() {
     lastTrack = currentTrack;
     generateTrackChars(currentTrack);
     lineFbo.clear();
+    walkerCharIdx = 0;
+    walkerCharTime = millis();
 
     // 歌詞を取得
     const artist = Spotify.getArtistName();
@@ -326,16 +325,39 @@ function updateSpotifyTrack() {
     lastArtUrl = artUrl;
     loadImage(artUrl, img => {
       albumArt = img;
-      // 平均輝度を計算してアートが暗いか判定
       img.loadPixels();
       let totalBr = 0;
-      const step = 40; // サンプリング間隔（全ピクセルは重いので間引く）
+      const step = 40;
       let count = 0;
+
+      // 色のヒストグラムを簡易的に集計（彩度の高いピクセルを重視）
+      let rSum = 0, gSum = 0, bSum = 0, cCount = 0;
       for (let i = 0; i < img.pixels.length; i += step * 4) {
-        totalBr += img.pixels[i] * 0.299 + img.pixels[i+1] * 0.587 + img.pixels[i+2] * 0.114;
+        const r = img.pixels[i];
+        const g = img.pixels[i + 1];
+        const b = img.pixels[i + 2];
+        totalBr += r * 0.299 + g * 0.587 + b * 0.114;
         count++;
+
+        // 彩度が高いピクセルほど重みをつける
+        const maxC = max(r, g, b);
+        const minC = min(r, g, b);
+        const sat = maxC > 0 ? (maxC - minC) / maxC : 0;
+        if (sat > 0.15) {
+          const w = sat * sat;
+          rSum += r * w;
+          gSum += g * w;
+          bSum += b * w;
+          cCount += w;
+        }
       }
       artIsDark = (totalBr / count) < 128;
+
+      if (cCount > 0) {
+        artColor = [floor(rSum / cCount), floor(gSum / cCount), floor(bSum / cCount)];
+      } else {
+        artColor = [0, 0, 0];
+      }
     }, () => { albumArt = null; });
   }
 }
@@ -370,25 +392,35 @@ function drawScanGlitch() {
   const noiseStr = NOISE_STRENGTH * s;
   const fn = frameCount;
 
-  if (glitchType === 0) {
-    // 縦線スキャン → scanFbo に描き込む
-    for (let x = 0; x < artSize; x++) {
-      const ny = noise(fn * 0.01 + x * 0.01) * noiseStr;
-      const sy = constrain(floor(ny), 0, artSize - 1);
-      const idx = (sy * artSize + x) * 4;
-      scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
-      scanFbo.strokeWeight(1);
-      scanFbo.line(vx + x, vy, vx + x, vy + artSize);
-    }
-  } else {
-    // 横線スキャン → scanFbo に描き込む
-    for (let y = 0; y < artSize; y++) {
-      const nx = noise(fn * 0.01 + y * 0.01 + 500) * noiseStr;
-      const sx = constrain(floor(nx), 0, artSize - 1);
-      const idx = (y * artSize + sx) * 4;
-      scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
-      scanFbo.strokeWeight(1);
-      scanFbo.line(vx, vy + y, vx + artSize, vy + y);
+  const cellSize = floor(artSize / SCAN_GRID);
+
+  for (let q = 0; q < SCAN_GRID * SCAN_GRID; q++) {
+    if (!scanBlocks.has(q)) continue;
+    const col = q % SCAN_GRID;
+    const row = floor(q / SCAN_GRID);
+    const bx0 = col * cellSize;
+    const bx1 = (col === SCAN_GRID - 1) ? artSize : bx0 + cellSize;
+    const by0 = row * cellSize;
+    const by1 = (row === SCAN_GRID - 1) ? artSize : by0 + cellSize;
+
+    if (glitchType === 0) {
+      for (let x = bx0; x < bx1; x++) {
+        const ny = noise(fn * 0.01 + x * 0.01) * noiseStr;
+        const sy = constrain(floor(ny), 0, artSize - 1);
+        const idx = (sy * artSize + x) * 4;
+        scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
+        scanFbo.strokeWeight(1);
+        scanFbo.line(vx + x, vy + by0, vx + x, vy + by1);
+      }
+    } else {
+      for (let y = by0; y < by1; y++) {
+        const nx = noise(fn * 0.01 + y * 0.01 + 500) * noiseStr;
+        const sx = constrain(floor(nx), 0, artSize - 1);
+        const idx = (y * artSize + sx) * 4;
+        scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
+        scanFbo.strokeWeight(1);
+        scanFbo.line(vx + bx0, vy + y, vx + bx1, vy + y);
+      }
     }
   }
 }
@@ -507,8 +539,8 @@ function drawLyrics() {
   const lineCount = lines.length;
 
   // 全行が画面に収まるように行間を計算し、フォントサイズも調整
-  const leading = min(34, availH / max(lineCount, 1));
-  const sz = min(24, leading * 0.75);
+  const leading = min(40, availH / max(lineCount, 1));
+  const sz = min(24, leading * 0.65);
 
   // 全体の高さから開始Y位置を算出して上下中央揃え
   const totalH = lineCount * leading;
@@ -518,28 +550,24 @@ function drawLyrics() {
   textAlign(CENTER, TOP);
   textFont(LYRICS_FONT);
   noStroke();
+  loadPixels();
 
   for (let i = 0; i < lineCount; i++) {
     const y = startY + i * leading;
     if (y > H - margin) break;
 
-    // 背景の明るさをサンプリングして白黒を決定
-    // ジャケット幅の範囲を横15点×縦3行でサンプリング
+    // 背景の明るさをピクセル配列から直接取得
+    const sampleY = constrain(floor(y + sz / 2), 0, H - 1);
     let brightnessSum = 0;
-    let totalSamples = 0;
+    const xCols = 7;
     const halfArt = artSize / 2;
-    const xCols = 15;
-    const yRows = 3;
-    for (let ry = 0; ry < yRows; ry++) {
-      const sy = constrain(floor(y + sz * ry / (yRows - 1)), 0, H - 1);
-      for (let j = 0; j < xCols; j++) {
-        const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
-        const c = get(sx, sy);
-        brightnessSum += (c[0] + c[1] + c[2]) / 3;
-        totalSamples++;
-      }
+    const d = pixelDensity();
+    for (let j = 0; j < xCols; j++) {
+      const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
+      const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
+      brightnessSum += (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
     }
-    const avgBrightness = brightnessSum / totalSamples;
+    const avgBrightness = brightnessSum / xCols;
     const textColor = avgBrightness < 128 ? 255 : 0;
 
     if (i === currentIdx) {
