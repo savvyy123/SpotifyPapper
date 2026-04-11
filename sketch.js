@@ -12,6 +12,7 @@ const LINE_WIDTH     = 7;
 const LINE_SPEED     = 0.5;
 const NOISE_STRENGTH = 200.0;
 const FONT_FAMILY    = 'Noto Sans JP';
+const LYRICS_FONT    = 'KazukiReiwa';
 
 // BPM グリッチ設定
 const GLITCH_CHANCE      = 0.15;  // 各拍でグリッチが発動する確率
@@ -35,7 +36,8 @@ function updateSizes() {
   W = windowWidth;
   H = windowHeight;
   s = min(W / BASE_W, H / BASE_H);
-  artSize = floor(650 * s);
+  const artBase = W < H ? 850 : 650;  // 縦画面では少し大きめ
+  artSize = floor(artBase * s);
 }
 
 // ---------------------------------------------------------------
@@ -48,6 +50,8 @@ let walkerPrevPrev;   // 2フレーム前の位置（曲率計算用）
 let walkerWeight = 0; // 現在の線の太さ（スムージング用）
 let walkerTime = 0;   // 可変速度の時間アキュムレータ
 let walkerCurve = 0;  // スムージングされた曲率
+let walkerOffsetX = 0; // テキスト回避オフセット
+let walkerOffsetY = 0;
 let albumArt;
 let lastArtUrl = '';
 let artCanvas;
@@ -202,8 +206,40 @@ function updateWalker() {
   walkerPrevPrev = walkerPrev.copy();
   walkerPrev = walkerPos.copy();
 
-  walkerPos.x = map(noise(walkerTime * LINE_SPEED),       0, 1, 0, W);
-  walkerPos.y = map(noise(walkerTime * LINE_SPEED + 1000), 0, 1, 0, H);
+  const baseX = map(noise(walkerTime * LINE_SPEED),       0, 1, 0, W);
+  const baseY = map(noise(walkerTime * LINE_SPEED + 1000), 0, 1, 0, H);
+
+  // 歌詞テキストからの反発力を計算
+  let targetOX = 0, targetOY = 0;
+  if (Lyrics.hasLyrics()) {
+    const lyLines = Lyrics.getLines();
+    const lineCount = lyLines.length;
+    const margin = 30;
+    const availH = H - margin * 2;
+    const leading = min(34, availH / max(lineCount, 1));
+    const sz = min(24, leading * 0.75);
+    const totalH = lineCount * leading;
+    const startY = (H - totalH) / 2;
+    const repelRadius = leading * 1.5;
+
+    for (let i = 0; i < lineCount; i++) {
+      const ly = startY + i * leading + sz / 2;
+      const lx = W / 2;
+      const dx = baseX - lx;
+      const dy = baseY - ly;
+      const dist = sqrt(dx * dx + dy * dy);
+      if (dist < repelRadius && dist > 0.1) {
+        const strength = pow(1 - dist / repelRadius, 2) * leading * 0.6;
+        targetOX += (dx / dist) * strength;
+        targetOY += (dy / dist) * strength;
+      }
+    }
+  }
+  walkerOffsetX = lerp(walkerOffsetX, targetOX, 0.08);
+  walkerOffsetY = lerp(walkerOffsetY, targetOY, 0.08);
+
+  walkerPos.x = constrain(baseX + walkerOffsetX, 0, W);
+  walkerPos.y = constrain(baseY + walkerOffsetY, 0, H);
 
   // 曲率を計算してスムージング
   const d1 = p5.Vector.sub(walkerPrev, walkerPrevPrev);
@@ -480,6 +516,7 @@ function drawLyrics() {
 
   push();
   textAlign(CENTER, TOP);
+  textFont(LYRICS_FONT);
   noStroke();
 
   for (let i = 0; i < lineCount; i++) {
@@ -487,24 +524,44 @@ function drawLyrics() {
     if (y > H - margin) break;
 
     // 背景の明るさをサンプリングして白黒を決定
-    const sampleY = constrain(floor(y + sz / 2), 0, H - 1);
+    // ジャケット幅の範囲を横15点×縦3行でサンプリング
     let brightnessSum = 0;
-    const sampleCount = 7;
-    for (let j = 0; j < sampleCount; j++) {
-      const sx = constrain(floor(W / 2 + (j - 3) * 50), 0, W - 1);
-      const c = get(sx, sampleY);
-      brightnessSum += (c[0] + c[1] + c[2]) / 3;
+    let totalSamples = 0;
+    const halfArt = artSize / 2;
+    const xCols = 15;
+    const yRows = 3;
+    for (let ry = 0; ry < yRows; ry++) {
+      const sy = constrain(floor(y + sz * ry / (yRows - 1)), 0, H - 1);
+      for (let j = 0; j < xCols; j++) {
+        const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
+        const c = get(sx, sy);
+        brightnessSum += (c[0] + c[1] + c[2]) / 3;
+        totalSamples++;
+      }
     }
-    const avgBrightness = brightnessSum / sampleCount;
+    const avgBrightness = brightnessSum / totalSamples;
     const textColor = avgBrightness < 128 ? 255 : 0;
 
     if (i === currentIdx) {
       const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
       const easedT = t * t * (3 - 2 * t);  // smoothstep
-      textSize(sz * 1.6);
+      let curSz = sz * 1.6;
+      textSize(curSz);
+      // アートの幅より少し内側に収める
+      const maxLyricsW = artSize * 0.85;
+      if (textWidth(lines[i].text) > maxLyricsW) {
+        curSz *= maxLyricsW / textWidth(lines[i].text);
+        textSize(curSz);
+      }
       fill(textColor, lerp(LYRICS_ALPHA, 255, easedT));
     } else {
-      textSize(sz);
+      let lineSz = sz;
+      textSize(lineSz);
+      const maxLyricsW = artSize * 0.85;
+      if (textWidth(lines[i].text) > maxLyricsW) {
+        lineSz *= maxLyricsW / textWidth(lines[i].text);
+        textSize(lineSz);
+      }
       fill(textColor, LYRICS_ALPHA);
     }
 
