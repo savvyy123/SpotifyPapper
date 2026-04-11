@@ -3,126 +3,191 @@
 //
 // 描画レイヤー構成:
 //   1. lineFbo  … 単一ウォーカーの黒線を蓄積（曲変更でクリア）
-//   2. Canvas   … 白背景 → lineFbo → 動画(+グリッチ) → テキスト
+//   2. Canvas   … 白背景 → lineFbo → アルバムアート(+グリッチ) → テキスト
 
 // ---------------------------------------------------------------
-// 定数（oF 版の固定パラメータに対応）
+// 定数
 // ---------------------------------------------------------------
-const W = 1920;
-const H = 1080;
-const LINE_WIDTH   = 4;
-const LINE_SPEED   = 0.5;
-const THRESHOLD    = 0.01;   // グリッチ発動閾値 (scaledVol)
-const VOL_SCALE    = 30.0;   // smoothedVol → scaledVol 係数
-const VIDEO_SIZE   = 400;
-const NOISE_STRENGTH = 200.0; // グリッチのノイズ振幅
-const FONT_FAMILY  = 'Noto Sans JP';
-const FONT_LARGE   = 72;
-const FONT_MEDIUM  = 32;
+const LINE_WIDTH     = 4;
+const LINE_SPEED     = 0.5;
+const NOISE_STRENGTH = 200.0;
+const FONT_FAMILY    = 'Noto Sans JP';
+
+// BPM グリッチ設定
+const GLITCH_CHANCE      = 0.30;  // 各拍でグリッチが発動する確率
+const GLITCH_DOWNBEAT    = 0.60;  // 強拍（1拍目）の発動確率
+const GLITCH_DURATION_MS = 120;   // グリッチ表示の持続時間 (ms)
+
+// 基準解像度（スケール計算用）
+const BASE_W = 1920;
+const BASE_H = 1080;
+
+// ---------------------------------------------------------------
+// 動的サイズ（ウィンドウに追従）
+// ---------------------------------------------------------------
+let W, H;           // 現在のキャンバスサイズ
+let s;              // スケール係数（min(W/1920, H/1080)）
+let artSize;        // アルバムアート表示サイズ
+const FONT_LARGE  = 72;  // 固定フォントサイズ
+const FONT_MEDIUM = 32;
+
+function updateSizes() {
+  W = windowWidth;
+  H = windowHeight;
+  s = min(W / BASE_W, H / BASE_H);
+  artSize = floor(400 * s);
+}
 
 // ---------------------------------------------------------------
 // 状態
 // ---------------------------------------------------------------
-let lineFbo;        // p5.Graphics — 線を蓄積するオフスクリーン
-let walkerPos;      // 現在位置
-let walkerPrev;     // 前フレーム位置
-let albumArt;       // p5.Image — アルバムジャケット画像
-let lastArtUrl = '';// 前回のアルバムアートURL（重複ロード防止）
-let artCanvas;      // ピクセル読み取り用オフスクリーン canvas
+let lineFbo;
+let walkerPos;
+let walkerPrev;
+let albumArt;
+let lastArtUrl = '';
+let artCanvas;
 let artCtx;
 
-let trackChars = [];   // {ch, x, y, angle}
+let trackChars = [];
 let lastTrack  = '';
 
-let typedText = '';    // キー入力テキスト
+let typedText = '';
+
+// BPM グリッチ状態
+let lastBeatTime = 0;   // 前回の拍タイミング (ms)
+let beatCount    = 0;    // 拍カウンター（強拍判定用）
+let glitchActive = false;
+let glitchStart  = 0;    // グリッチ開始時刻 (ms)
 
 // ---------------------------------------------------------------
 // p5.js ライフサイクル
 // ---------------------------------------------------------------
 function setup() {
+  updateSizes();
   createCanvas(W, H);
   textFont(FONT_FAMILY);
   frameRate(60);
 
-  // 線の蓄積レイヤー（白背景・透明クリア → oF の ofClear(255,255,255,0) に対応）
-  lineFbo = createGraphics(W, H);
-  lineFbo.clear();
-  lineFbo.strokeWeight(LINE_WIDTH);
-  lineFbo.stroke(0);
-  lineFbo.noFill();
+  initLineFbo();
 
-  // ウォーカー初期位置
   walkerPos  = createVector(random(W), random(H));
   walkerPrev = walkerPos.copy();
 
-  // アルバムアート ピクセル読み取り用オフスクリーン canvas
   artCanvas = document.createElement('canvas');
-  artCanvas.width  = VIDEO_SIZE;
-  artCanvas.height = VIDEO_SIZE;
   artCtx = artCanvas.getContext('2d', { willReadFrequently: true });
 
-  // マイク + Spotify 初期化
-  Audio.init().catch(e => console.warn('Audio init failed:', e));
   Spotify.init();
 }
 
+function initLineFbo() {
+  lineFbo = createGraphics(W, H);
+  lineFbo.clear();
+  lineFbo.strokeWeight(LINE_WIDTH * s);
+  lineFbo.stroke(0);
+  lineFbo.noFill();
+}
+
+function windowResized() {
+  const oldW = W, oldH = H;
+  updateSizes();
+  resizeCanvas(W, H);
+
+  // 蓄積した線を新しいサイズに引き伸ばしてコピー
+  const oldFbo = lineFbo;
+  initLineFbo();
+  lineFbo.image(oldFbo, 0, 0, W, H);
+
+  // ウォーカー位置をリマップ
+  walkerPos.x = walkerPos.x / oldW * W;
+  walkerPos.y = walkerPos.y / oldH * H;
+  walkerPrev = walkerPos.copy();
+
+  // 文字位置をリマップ
+  for (const c of trackChars) {
+    c.x = c.x / oldW * W;
+    c.y = c.y / oldH * H;
+  }
+}
+
 function draw() {
-  // ---- update ----
   updateSpotifyTrack();
-  updateWalker();
+  if (Spotify.getIsPlaying()) {
+    updateWalker();
+    updateBeatGlitch();
+  }
 
-  // 音量スケーリング（oF: scaledVol = clamp(smoothedVol * 30, 0, 1)）
-  const rms = Audio.getRMS();
-  const scaledVol = constrain(rms * VOL_SCALE, 0, 1);
+  background(255);
 
-  // ---- draw ----
-  background(255); // 白背景
-
-  // 1. 背景の線（蓄積レイヤー）
+  // 1. 背景の線
   image(lineFbo, 0, 0);
 
-  // 2. アルバムアート（中央 400×400）
-  if (scaledVol < THRESHOLD) {
-    drawArtNormal();
-  } else {
+  // 2. アルバムアート（中央）
+  if (glitchActive) {
     drawArtGlitch();
+  } else {
+    drawArtNormal();
   }
 
-  // 3. 曲名（1文字ずつランダム配置・回転）
+  // 3. 曲名
   drawTrackChars();
 
-  // 4. アーティスト名（右上）
+  // 4. アーティスト名
   drawArtistName();
 
-  // 5. 入力テキスト（中央・白文字）
+  // 5. 入力テキスト
   drawTypedText();
 
-  // 6. 再生コントロール or ログインボタン
-  if (Spotify.isLoggedIn()) {
-    drawControls();
-  } else {
+  // 6. ログインボタン
+  if (!Spotify.isLoggedIn()) {
     drawLoginButton();
   }
-
-  // 7. 音量バー（左下・デバッグ用）
-  drawVolumeBar(scaledVol);
 }
 
 // ---------------------------------------------------------------
-// Walker（単一・Perlin ノイズで座標マッピング）
+// Walker
 // ---------------------------------------------------------------
 function updateWalker() {
   walkerPrev = walkerPos.copy();
 
-  // oF: ofNoise(t * lineSpeed) → 0〜1 をウィンドウ幅にマップ
-  const t = millis() / 1000.0; // ofGetElapsedTimef() 相当
-  walkerPos.x = map(noise(t * LINE_SPEED),         0, 1, 0, W);
-  walkerPos.y = map(noise(t * LINE_SPEED + 1000),   0, 1, 0, H);
+  const t = millis() / 1000.0;
+  walkerPos.x = map(noise(t * LINE_SPEED),       0, 1, 0, W);
+  walkerPos.y = map(noise(t * LINE_SPEED + 1000), 0, 1, 0, H);
 
-  // 線を蓄積レイヤーに描画
   lineFbo.stroke(0);
-  lineFbo.strokeWeight(LINE_WIDTH);
+  lineFbo.strokeWeight(LINE_WIDTH * s);
   lineFbo.line(walkerPrev.x, walkerPrev.y, walkerPos.x, walkerPos.y);
+}
+
+// ---------------------------------------------------------------
+// BPM ベースのグリッチ判定
+// ---------------------------------------------------------------
+function updateBeatGlitch() {
+  const bpm = Spotify.getBPM();
+  if (bpm <= 0) return;
+
+  const now = millis();
+  const beatInterval = 60000 / bpm; // 1拍の長さ (ms)
+
+  // グリッチの持続時間が過ぎたら解除
+  if (glitchActive && now - glitchStart > GLITCH_DURATION_MS) {
+    glitchActive = false;
+  }
+
+  // 次の拍タイミングに達したか判定
+  if (now - lastBeatTime >= beatInterval) {
+    lastBeatTime = now;
+    beatCount++;
+
+    // 4拍で1小節、1拍目（強拍）は発動確率を上げる
+    const isDownbeat = (beatCount % 4 === 0);
+    const chance = isDownbeat ? GLITCH_DOWNBEAT : GLITCH_CHANCE;
+
+    if (random() < chance) {
+      glitchActive = true;
+      glitchStart = now;
+    }
+  }
 }
 
 // ---------------------------------------------------------------
@@ -133,12 +198,9 @@ function updateSpotifyTrack() {
   if (currentTrack && currentTrack !== lastTrack) {
     lastTrack = currentTrack;
     generateTrackChars(currentTrack);
-
-    // 曲が変わったら線をリセット（oF: lineFbo.begin(); ofClear(...); lineFbo.end();）
     lineFbo.clear();
   }
 
-  // アルバムアート画像の読み込み（URL が変わったときだけ）
   const artUrl = Spotify.getAlbumArtUrl();
   if (artUrl && artUrl !== lastArtUrl) {
     lastArtUrl = artUrl;
@@ -151,45 +213,47 @@ function updateSpotifyTrack() {
 // ---------------------------------------------------------------
 function drawArtNormal() {
   if (!albumArt) return;
-  const vx = (W - VIDEO_SIZE) / 2;
-  const vy = (H - VIDEO_SIZE) / 2;
-  image(albumArt, vx, vy, VIDEO_SIZE, VIDEO_SIZE);
+  const vx = (W - artSize) / 2;
+  const vy = (H - artSize) / 2;
+  image(albumArt, vx, vy, artSize, artSize);
 }
 
 // ---------------------------------------------------------------
-// アルバムアート描画（グリッチ — oF 版の縦線スキャン＋ノイズ Y）
+// アルバムアート描画（グリッチ）
 // ---------------------------------------------------------------
 function drawArtGlitch() {
   if (!albumArt) return;
 
-  const vx = (W - VIDEO_SIZE) / 2;
-  const vy = (H - VIDEO_SIZE) / 2;
+  const vx = (W - artSize) / 2;
+  const vy = (H - artSize) / 2;
 
-  // アルバムアートをオフスクリーン canvas に描画してピクセルを読み取る
-  artCtx.drawImage(albumArt.canvas, 0, 0, VIDEO_SIZE, VIDEO_SIZE);
-  const imageData = artCtx.getImageData(0, 0, VIDEO_SIZE, VIDEO_SIZE);
+  // オフスクリーン canvas をアートサイズに合わせる
+  if (artCanvas.width !== artSize || artCanvas.height !== artSize) {
+    artCanvas.width  = artSize;
+    artCanvas.height = artSize;
+  }
+
+  artCtx.drawImage(albumArt.canvas, 0, 0, artSize, artSize);
+  const imageData = artCtx.getImageData(0, 0, artSize, artSize);
   const pixels = imageData.data;
 
-  const fn = frameCount; // oF: ofGetFrameNum()
+  const noiseStr = NOISE_STRENGTH * s;
+  const fn = frameCount;
 
-  for (let x = 0; x < VIDEO_SIZE; x++) {
-    // oF: float y = ofNoise(ofGetFrameNum()*0.01 + x*0.01) * noiseStrength
-    const ny = noise(fn * 0.01 + x * 0.01) * NOISE_STRENGTH;
-    const sy = constrain(floor(ny), 0, VIDEO_SIZE - 1);
-    const sx = constrain(x, 0, VIDEO_SIZE - 1);
+  for (let x = 0; x < artSize; x++) {
+    const ny = noise(fn * 0.01 + x * 0.01) * noiseStr;
+    const sy = constrain(floor(ny), 0, artSize - 1);
 
-    // ピクセルカラー取得
-    const idx = (sy * VIDEO_SIZE + sx) * 4;
+    const idx = (sy * artSize + x) * 4;
     const r = pixels[idx];
     const g = pixels[idx + 1];
     const b = pixels[idx + 2];
 
-    // 縦線を描画
     drawingContext.strokeStyle = `rgb(${r},${g},${b})`;
     drawingContext.lineWidth = 1;
     drawingContext.beginPath();
     drawingContext.moveTo(vx + x, vy);
-    drawingContext.lineTo(vx + x, vy + VIDEO_SIZE);
+    drawingContext.lineTo(vx + x, vy + artSize);
     drawingContext.stroke();
   }
 }
@@ -202,15 +266,14 @@ function generateTrackChars(track) {
   textSize(FONT_LARGE);
 
   for (const ch of track) {
-    // oF ではスペースも含めて配置している
     const cw = textWidth(ch);
-    const ch2 = FONT_LARGE; // 概算の文字高さ
+    const ch2 = FONT_LARGE;
 
     trackChars.push({
       ch,
       x:     random(cw, W - cw),
       y:     random(ch2, H - ch2),
-      angle: random(-PI / 4, PI / 4), // oF: ofRandom(-45, 45) → deg → rad
+      angle: random(-PI / 4, PI / 4),
     });
   }
 }
@@ -222,7 +285,7 @@ function drawTrackChars() {
     rotate(c.angle);
     textSize(FONT_LARGE);
     textAlign(CENTER, CENTER);
-    fill(0); // oF: ofSetColor(0) → 黒
+    fill(0);
     noStroke();
     text(c.ch, 0, 0);
     pop();
@@ -230,7 +293,7 @@ function drawTrackChars() {
 }
 
 // ---------------------------------------------------------------
-// アーティスト名（右上・中サイズ）
+// アーティスト名（右上）
 // ---------------------------------------------------------------
 function drawArtistName() {
   const artist = Spotify.getArtistName();
@@ -239,15 +302,14 @@ function drawArtistName() {
   push();
   textSize(FONT_MEDIUM);
   textAlign(RIGHT, TOP);
-  fill(0); // 黒
+  fill(0);
   noStroke();
-  // oF: x = width - bounds.width - 20, y = 60
   text(artist, W - 20, 60);
   pop();
 }
 
 // ---------------------------------------------------------------
-// 入力テキスト（中央・白・大サイズ）
+// 入力テキスト（中央・白）
 // ---------------------------------------------------------------
 function drawTypedText() {
   if (!typedText) return;
@@ -255,165 +317,9 @@ function drawTypedText() {
   push();
   textSize(FONT_LARGE);
   textAlign(CENTER, CENTER);
-  fill(255); // oF: ofSetColor(255) → 白
+  fill(255);
   noStroke();
   text(typedText, W / 2, H / 2);
-  pop();
-}
-
-// ---------------------------------------------------------------
-// 再生コントロール（Spotify 風）
-// ---------------------------------------------------------------
-// ボタン配置定数
-const CTRL_Y     = H / 2 + VIDEO_SIZE / 2 + 50; // アルバムアートの下
-const CTRL_CX    = W / 2;                        // 中央 X
-const BTN_GAP    = 64;                            // ボタン間隔
-const PLAY_R     = 24;                            // 再生ボタン半径
-const SMALL_R    = 14;                            // 小ボタン半径
-const SPOTIFY_GREEN = [30, 215, 96];
-
-function drawControls() {
-  if (!Spotify.isLoggedIn()) return;
-
-  const shuffleOn = Spotify.getShuffleState();
-  const repeatMode = Spotify.getRepeatState();
-  const playing = Spotify.getIsPlaying();
-
-  // --- シャッフル ---
-  drawShuffleIcon(CTRL_CX - BTN_GAP * 2, CTRL_Y, shuffleOn);
-
-  // --- 前の曲 ---
-  drawPrevIcon(CTRL_CX - BTN_GAP, CTRL_Y);
-
-  // --- 再生 / 一時停止 ---
-  drawPlayPauseIcon(CTRL_CX, CTRL_Y, playing);
-
-  // --- 次の曲 ---
-  drawNextIcon(CTRL_CX + BTN_GAP, CTRL_Y);
-
-  // --- リピート ---
-  drawRepeatIcon(CTRL_CX + BTN_GAP * 2, CTRL_Y, repeatMode);
-}
-
-function drawPlayPauseIcon(cx, cy, playing) {
-  push();
-  // 背景の丸
-  fill(0);
-  noStroke();
-  ellipse(cx, cy, PLAY_R * 2);
-
-  fill(255);
-  if (playing) {
-    // 一時停止 ❚❚
-    const bw = 5, bh = 16, gap = 4;
-    rectMode(CENTER);
-    rect(cx - gap - bw / 2 + gap, cy, bw, bh, 1);
-    rect(cx + gap + bw / 2 - gap, cy, bw, bh, 1);
-  } else {
-    // 再生 ▶
-    triangle(cx - 7, cy - 10, cx - 7, cy + 10, cx + 11, cy);
-  }
-  pop();
-}
-
-function drawPrevIcon(cx, cy) {
-  push();
-  fill(0);
-  noStroke();
-  // |◁
-  const s = SMALL_R * 0.7;
-  rect(cx - s - 2, cy - s, 3, s * 2);
-  triangle(cx + s, cy - s, cx + s, cy + s, cx - s, cy);
-  pop();
-}
-
-function drawNextIcon(cx, cy) {
-  push();
-  fill(0);
-  noStroke();
-  // ▷|
-  const s = SMALL_R * 0.7;
-  rect(cx + s - 1, cy - s, 3, s * 2);
-  triangle(cx - s, cy - s, cx - s, cy + s, cx + s, cy);
-  pop();
-}
-
-function drawShuffleIcon(cx, cy, active) {
-  push();
-  stroke(active ? SPOTIFY_GREEN : 0);
-  strokeWeight(2.5);
-  noFill();
-  const s = 8;
-  // 交差する2本の矢印線
-  line(cx - s, cy - s, cx + s, cy + s);
-  line(cx - s, cy + s, cx + s, cy - s);
-  // 矢印先端（右上）
-  line(cx + s, cy - s, cx + s - 4, cy - s);
-  line(cx + s, cy - s, cx + s, cy - s + 4);
-  // 矢印先端（右下）
-  line(cx + s, cy + s, cx + s - 4, cy + s);
-  line(cx + s, cy + s, cx + s, cy + s - 4);
-
-  // ON のとき下にドット
-  if (active) {
-    noStroke();
-    fill(SPOTIFY_GREEN);
-    ellipse(cx, cy + s + 8, 5, 5);
-  }
-  pop();
-}
-
-function drawRepeatIcon(cx, cy, mode) {
-  const active = mode !== 'off';
-  push();
-  stroke(active ? SPOTIFY_GREEN : 0);
-  strokeWeight(2.5);
-  noFill();
-  const s = 9;
-  // 丸い矢印（簡易的な四角ループ）
-  beginShape();
-  vertex(cx - s, cy - s);
-  vertex(cx + s, cy - s);
-  vertex(cx + s, cy + s);
-  vertex(cx - s, cy + s);
-  endShape(CLOSE);
-  // 右上に矢印
-  line(cx + s, cy - s, cx + s - 4, cy - s - 4);
-  line(cx + s, cy - s, cx + s + 4, cy - s - 4);
-  // 左下に矢印
-  line(cx - s, cy + s, cx - s - 4, cy + s + 4);
-  line(cx - s, cy + s, cx - s + 4, cy + s + 4);
-
-  // track repeat のとき "1" を表示
-  if (mode === 'track') {
-    noStroke();
-    fill(SPOTIFY_GREEN);
-    textSize(11);
-    textAlign(CENTER, CENTER);
-    text('1', cx, cy);
-  }
-
-  // active のとき下にドット
-  if (active) {
-    noStroke();
-    fill(SPOTIFY_GREEN);
-    ellipse(cx, cy + s + 10, 5, 5);
-  }
-  pop();
-}
-
-// ---------------------------------------------------------------
-// 音量バー（左下・デバッグ用）
-// ---------------------------------------------------------------
-function drawVolumeBar(scaledVol) {
-  const barW = 200;
-  const barH = 20;
-  const filled = barW * scaledVol;
-
-  push();
-  fill(0);
-  noStroke();
-  rect(20, H - 40, filled, barH);
   pop();
 }
 
@@ -422,7 +328,7 @@ function drawVolumeBar(scaledVol) {
 // ---------------------------------------------------------------
 function drawLoginButton() {
   const bw = 220, bh = 52;
-  const bx = W / 2, by = CTRL_Y;
+  const bx = W / 2, by = H / 2 + artSize / 2 + 50;
 
   push();
   rectMode(CENTER);
@@ -442,49 +348,25 @@ function drawLoginButton() {
 // ---------------------------------------------------------------
 function mousePressed() {
   if (!Spotify.isLoggedIn()) {
-    // ログインボタン
-    if (abs(mouseX - CTRL_CX) < 110 && abs(mouseY - CTRL_Y) < 26) {
+    const bx = W / 2, by = H / 2 + artSize / 2 + 50;
+    if (abs(mouseX - bx) < 110 && abs(mouseY - by) < 26) {
       Spotify.login();
     }
-    return;
-  }
-
-  // 再生コントロールのクリック判定
-  const hitR = 22; // クリック判定半径
-
-  if (dist(mouseX, mouseY, CTRL_CX, CTRL_Y) < PLAY_R + 4) {
-    // 再生 / 一時停止
-    Spotify.togglePlay();
-  } else if (dist(mouseX, mouseY, CTRL_CX - BTN_GAP, CTRL_Y) < hitR) {
-    // 前の曲
-    Spotify.skipPrev();
-  } else if (dist(mouseX, mouseY, CTRL_CX + BTN_GAP, CTRL_Y) < hitR) {
-    // 次の曲
-    Spotify.skipNext();
-  } else if (dist(mouseX, mouseY, CTRL_CX - BTN_GAP * 2, CTRL_Y) < hitR) {
-    // シャッフル
-    Spotify.toggleShuffle();
-  } else if (dist(mouseX, mouseY, CTRL_CX + BTN_GAP * 2, CTRL_Y) < hitR) {
-    // リピート
-    Spotify.cycleRepeat();
   }
 }
 
 function keyPressed() {
   if (keyCode === ESCAPE) {
-    // oF: ofToggleFullscreen()
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
       document.documentElement.requestFullscreen().catch(() => {});
     }
-    return false; // ESC のデフォルト動作を抑止
+    return false;
   } else if (keyCode === BACKSPACE) {
-    // oF: typedText.pop_back()
     typedText = typedText.slice(0, -1);
     return false;
   } else if (keyCode === ENTER || keyCode === RETURN) {
-    // oF: typedText.clear()
     typedText = '';
     return false;
   } else if (key.length === 1) {
