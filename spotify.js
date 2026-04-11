@@ -6,7 +6,7 @@ const Spotify = (() => {
   // 設定
   // ---------------------------------------------------------------
   const CLIENT_ID = '3bc5ba6756a64cf8a6275e18dd3b306d'; // ← Spotify Developer Dashboard から取得
-  const REDIRECT_URI = 'http://127.0.0.1:8888/';
+  const REDIRECT_URI = 'https://spotifypapper.netlify.app/';
   const SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state';
   const POLL_INTERVAL_MS = 5000;
 
