@@ -26,9 +26,10 @@ const FONT_MEDIUM  = 32;
 let lineFbo;        // p5.Graphics — 線を蓄積するオフスクリーン
 let walkerPos;      // 現在位置
 let walkerPrev;     // 前フレーム位置
-let video;          // HTML video 要素
-let videoCanvas;    // 動画ピクセル読み取り用オフスクリーン canvas
-let videoCtx;
+let albumArt;       // p5.Image — アルバムジャケット画像
+let lastArtUrl = '';// 前回のアルバムアートURL（重複ロード防止）
+let artCanvas;      // ピクセル読み取り用オフスクリーン canvas
+let artCtx;
 
 let trackChars = [];   // {ch, x, y, angle}
 let lastTrack  = '';
@@ -54,17 +55,11 @@ function setup() {
   walkerPos  = createVector(random(W), random(H));
   walkerPrev = walkerPos.copy();
 
-  // 動画要素
-  video = document.getElementById('walkVideo');
-  video.play().catch(() => {
-    document.addEventListener('click', () => video.play(), { once: true });
-  });
-
-  // 動画ピクセル読み取り用の小さな canvas
-  videoCanvas = document.createElement('canvas');
-  videoCanvas.width  = VIDEO_SIZE;
-  videoCanvas.height = VIDEO_SIZE;
-  videoCtx = videoCanvas.getContext('2d', { willReadFrequently: true });
+  // アルバムアート ピクセル読み取り用オフスクリーン canvas
+  artCanvas = document.createElement('canvas');
+  artCanvas.width  = VIDEO_SIZE;
+  artCanvas.height = VIDEO_SIZE;
+  artCtx = artCanvas.getContext('2d', { willReadFrequently: true });
 
   // マイク + Spotify 初期化
   Audio.init().catch(e => console.warn('Audio init failed:', e));
@@ -86,11 +81,11 @@ function draw() {
   // 1. 背景の線（蓄積レイヤー）
   image(lineFbo, 0, 0);
 
-  // 2. 動画（中央 400×400）
+  // 2. アルバムアート（中央 400×400）
   if (scaledVol < THRESHOLD) {
-    drawVideoNormal();
+    drawArtNormal();
   } else {
-    drawVideoGlitch();
+    drawArtGlitch();
   }
 
   // 3. 曲名（1文字ずつランダム配置・回転）
@@ -140,30 +135,37 @@ function updateSpotifyTrack() {
     // 曲が変わったら線をリセット（oF: lineFbo.begin(); ofClear(...); lineFbo.end();）
     lineFbo.clear();
   }
+
+  // アルバムアート画像の読み込み（URL が変わったときだけ）
+  const artUrl = Spotify.getAlbumArtUrl();
+  if (artUrl && artUrl !== lastArtUrl) {
+    lastArtUrl = artUrl;
+    loadImage(artUrl, img => { albumArt = img; }, () => { albumArt = null; });
+  }
 }
 
 // ---------------------------------------------------------------
-// 動画描画（通常）
+// アルバムアート描画（通常）
 // ---------------------------------------------------------------
-function drawVideoNormal() {
-  if (!video || video.readyState < 2) return;
+function drawArtNormal() {
+  if (!albumArt) return;
   const vx = (W - VIDEO_SIZE) / 2;
   const vy = (H - VIDEO_SIZE) / 2;
-  drawingContext.drawImage(video, vx, vy, VIDEO_SIZE, VIDEO_SIZE);
+  image(albumArt, vx, vy, VIDEO_SIZE, VIDEO_SIZE);
 }
 
 // ---------------------------------------------------------------
-// 動画描画（グリッチ — oF 版の縦線スキャン＋ノイズ Y）
+// アルバムアート描画（グリッチ — oF 版の縦線スキャン＋ノイズ Y）
 // ---------------------------------------------------------------
-function drawVideoGlitch() {
-  if (!video || video.readyState < 2) return;
+function drawArtGlitch() {
+  if (!albumArt) return;
 
   const vx = (W - VIDEO_SIZE) / 2;
   const vy = (H - VIDEO_SIZE) / 2;
 
-  // 動画をオフスクリーン canvas に描画してピクセルを読み取る
-  videoCtx.drawImage(video, 0, 0, VIDEO_SIZE, VIDEO_SIZE);
-  const imageData = videoCtx.getImageData(0, 0, VIDEO_SIZE, VIDEO_SIZE);
+  // アルバムアートをオフスクリーン canvas に描画してピクセルを読み取る
+  artCtx.drawImage(albumArt.canvas, 0, 0, VIDEO_SIZE, VIDEO_SIZE);
+  const imageData = artCtx.getImageData(0, 0, VIDEO_SIZE, VIDEO_SIZE);
   const pixels = imageData.data;
 
   const fn = frameCount; // oF: ofGetFrameNum()

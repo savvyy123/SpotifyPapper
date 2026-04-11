@@ -17,6 +17,7 @@ const Spotify = (() => {
   let tokenExpires = 0;
   let trackName = '';
   let artistName = '';
+  let albumArtUrl = '';
   let bpm = 0;
 
   // ---------------------------------------------------------------
@@ -135,6 +136,9 @@ const Spotify = (() => {
         if (newTrack !== trackName) {
           trackName = newTrack;
           artistName = newArtist;
+          // アルバムジャケット画像（最大サイズ: 640×640）
+          const images = data.item.album.images;
+          albumArtUrl = images.length > 0 ? images[0].url : '';
           await fetchAudioFeatures(data.item.id);
         }
       }
@@ -179,8 +183,9 @@ const Spotify = (() => {
   // ---------------------------------------------------------------
   function getTrackName()  { return trackName; }
   function getArtistName() { return artistName; }
+  function getAlbumArtUrl(){ return albumArtUrl; }
   function getBPM()        { return bpm; }
   function isLoggedIn()    { return !!accessToken; }
 
-  return { init, login, getTrackName, getArtistName, getBPM, isLoggedIn };
+  return { init, login, getTrackName, getArtistName, getAlbumArtUrl, getBPM, isLoggedIn };
 })();
