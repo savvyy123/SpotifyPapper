@@ -539,8 +539,8 @@ function drawLyrics() {
   const lineCount = lines.length;
 
   // 全行が画面に収まるように行間を計算し、フォントサイズも調整
-  const leading = min(40, availH / max(lineCount, 1));
-  const sz = min(24, leading * 0.65);
+  const leading = min(44, availH / max(lineCount, 1));
+  const sz = min(28, leading * 0.65);
 
   // 全体の高さから開始Y位置を算出して上下中央揃え
   const totalH = lineCount * leading;
