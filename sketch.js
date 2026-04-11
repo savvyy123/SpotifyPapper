@@ -62,7 +62,8 @@ let lastArtUrl = '';
 let artCanvas;
 let artCtx;
 let artIsDark = false;   // アルバムアートが暗いかどうか
-let artColor = [0, 0, 0]; // ジャケットから抽出した線の色
+let artColor = [0, 0, 0];   // ジャケットから抽出した線の色
+let artPalette = [];         // ジャケットから抽出した複数色
 
 let trackChars = [];
 let lastTrack  = '';
@@ -360,6 +361,29 @@ function updateSpotifyTrack() {
       } else {
         artColor = [0, 0, 0];
       }
+
+      // パレット抽出: 画像の各領域から代表色を取得
+      artPalette = [];
+      const cols = 4, rows = 4;
+      const pw = img.width / cols, ph = img.height / rows;
+      const d = img.pixels.length > 100000 ? 20 : 4;
+      for (let gy = 0; gy < rows; gy++) {
+        for (let gx = 0; gx < cols; gx++) {
+          let pr = 0, pg = 0, pb = 0, pc = 0;
+          for (let y = floor(gy * ph); y < floor((gy + 1) * ph); y += d) {
+            for (let x = floor(gx * pw); x < floor((gx + 1) * pw); x += d) {
+              const idx = (y * img.width + x) * 4;
+              pr += img.pixels[idx];
+              pg += img.pixels[idx + 1];
+              pb += img.pixels[idx + 2];
+              pc++;
+            }
+          }
+          if (pc > 0) artPalette.push([floor(pr / pc), floor(pg / pc), floor(pb / pc)]);
+        }
+      }
+      // 重複を減らして色のバリエーションを保つ
+      if (artPalette.length === 0) artPalette.push(artColor);
     }, () => { albumArt = null; });
   }
 }
@@ -477,22 +501,16 @@ function generateTrackChars(track) {
   waveT = 0;
 }
 
-// 波線の設定
-const WAVE_NUM_LINES = 3;    // 波線の本数
-const WAVE_FREQ = 1;         // 波の周波数
-const WAVE_HEIGHT = 4;       // 波の振幅
-const WAVE_RES = 30;         // 波の解像度
+// 線の設定
+const WAVE_NUM_LINES = 2;    // 線の本数
 
 function drawTrackChars() {
   if (!p5Font || trackChars.length === 0) return;
 
-  waveT += 0.02;
-  const bpm = Spotify.getBPM() || 120;
-  const bpmWave = WAVE_HEIGHT * (bpm / 120);
-
-  // 全文字のアウトライン点をワールド座標に変換して連結
-  let allPoints = [];
-  for (const c of trackChars) {
+  // 各文字ごとに点群とカラーを記録
+  const charSegments = []; // { points: [], color: [r,g,b] }
+  for (let ci = 0; ci < trackChars.length; ci++) {
+    const c = trackChars[ci];
     const pts = p5Font.textToPoints(c.ch, 0, 0, c.size, { sampleFactor: 0.22 });
     if (pts.length === 0) continue;
 
@@ -500,36 +518,69 @@ function drawTrackChars() {
     const cx = bounds.x + bounds.w / 2;
     const cy = bounds.y + bounds.h / 2;
 
+    const worldPts = [];
     for (const p of pts) {
-      // 中心基準にしてから回転→文字位置に移動
       let lx = p.x - cx;
       let ly = p.y - cy;
       const cosA = cos(c.angle);
       const sinA = sin(c.angle);
-      const rx = lx * cosA - ly * sinA;
-      const ry = lx * sinA + ly * cosA;
-      allPoints.push({ x: c.x + rx, y: c.y + ry });
+      worldPts.push({
+        x: c.x + lx * cosA - ly * sinA,
+        y: c.y + lx * sinA + ly * cosA,
+      });
     }
+
+    const col = artPalette.length > 0
+      ? artPalette[ci % artPalette.length]
+      : artColor;
+
+    charSegments.push({ points: worldPts, color: col });
   }
 
-  if (allPoints.length === 0) return;
+  if (charSegments.length === 0) return;
 
-  // 連結した点群を波線で描画
   push();
   noFill();
-  strokeWeight(1 * s);
+  strokeWeight(1.5 * s);
 
   for (let n = 0; n < WAVE_NUM_LINES; n++) {
-    stroke(artColor[0], artColor[1], artColor[2], 60 + n * 20);
-    beginShape();
-    for (let j = 0; j < allPoints.length; j++) {
-      const p = allPoints[j];
-      const wave = sin((j / WAVE_RES) * PI * WAVE_FREQ + waveT + n * 0.5) * bpmWave;
-      const px = p.x + cos(n * 0.3) * wave;
-      const py = p.y + sin(n * 0.3) * wave;
-      curveVertex(px, py);
+    // 文字間をグラデーションで繋ぐため、短い線分ごとに色を補間
+    for (let si = 0; si < charSegments.length; si++) {
+      const seg = charSegments[si];
+      const nextSeg = charSegments[(si + 1) % charSegments.length];
+      const c1 = seg.color;
+      const c2 = nextSeg.color;
+
+      // この文字の点群を描画（色をグラデーション）
+      const pts = seg.points;
+      for (let j = 0; j < pts.length - 1; j++) {
+        const t = j / max(pts.length - 1, 1);
+        const r = lerp(c1[0], c2[0], t);
+        const g = lerp(c1[1], c2[1], t);
+        const b = lerp(c1[2], c2[2], t);
+        stroke(r, g, b, 160 + n * 40);
+        line(pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y);
+      }
+
+      // 次の文字への接続線（グラデーション）
+      if (charSegments.length > 1 && pts.length > 0 && nextSeg.points.length > 0) {
+        const from = pts[pts.length - 1];
+        const to = nextSeg.points[0];
+        const steps = 20;
+        for (let j = 0; j < steps; j++) {
+          const t = j / steps;
+          const r = lerp(c1[0], c2[0], t);
+          const g = lerp(c1[1], c2[1], t);
+          const b = lerp(c1[2], c2[2], t);
+          stroke(r, g, b, (160 + n * 40) * (1 - t * 0.5));
+          const x1 = lerp(from.x, to.x, t);
+          const y1 = lerp(from.y, to.y, t);
+          const x2 = lerp(from.x, to.x, (j + 1) / steps);
+          const y2 = lerp(from.y, to.y, (j + 1) / steps);
+          line(x1, y1, x2, y2);
+        }
+      }
     }
-    endShape();
   }
 
   pop();
