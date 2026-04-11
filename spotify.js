@@ -22,6 +22,8 @@ const Spotify = (() => {
   let isPlaying = false;
   let shuffleState = false;
   let repeatState = 'off'; // 'off' | 'context' | 'track'
+  let progressMs = 0;         // 再生位置 (ms)
+  let progressUpdatedAt = 0;  // progressMs を取得した時刻 (ms)
 
   // ---------------------------------------------------------------
   // PKCE ユーティリティ
@@ -137,6 +139,8 @@ const Spotify = (() => {
       isPlaying = data.is_playing || false;
       shuffleState = data.shuffle_state || false;
       repeatState = data.repeat_state || 'off';
+      progressMs = data.progress_ms || 0;
+      progressUpdatedAt = Date.now();
 
       if (data.item) {
         const newTrack = data.item.name;
@@ -264,11 +268,16 @@ const Spotify = (() => {
   function getShuffleState() { return shuffleState; }
   function getRepeatState()  { return repeatState; }
   function isLoggedIn()      { return !!accessToken; }
+  // ポーリング間隔の間も補間して現在の再生位置を返す
+  function getProgressMs() {
+    if (!isPlaying) return progressMs;
+    return progressMs + (Date.now() - progressUpdatedAt);
+  }
 
   return {
     init, login,
     getTrackName, getArtistName, getAlbumArtUrl, getBPM,
-    getIsPlaying, getShuffleState, getRepeatState,
+    getIsPlaying, getShuffleState, getRepeatState, getProgressMs,
     isLoggedIn,
     togglePlay, skipNext, skipPrev, toggleShuffle, cycleRepeat,
   };

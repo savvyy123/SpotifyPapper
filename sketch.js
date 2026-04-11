@@ -8,15 +8,15 @@
 // ---------------------------------------------------------------
 // 定数
 // ---------------------------------------------------------------
-const LINE_WIDTH     = 4;
+const LINE_WIDTH     = 7;
 const LINE_SPEED     = 0.5;
 const NOISE_STRENGTH = 200.0;
 const FONT_FAMILY    = 'Noto Sans JP';
 
 // BPM グリッチ設定
-const GLITCH_CHANCE      = 0.45;  // 各拍でグリッチが発動する確率
-const GLITCH_DOWNBEAT    = 0.80;  // 強拍（1拍目）の発動確率
-const GLITCH_DURATION_MS = 250;   // グリッチ表示の持続時間 (ms)
+const GLITCH_CHANCE      = 0.15;  // 各拍でグリッチが発動する確率
+const GLITCH_DOWNBEAT    = 0.35;  // 強拍（1拍目）の発動確率
+const GLITCH_DURATION_MS = 180;   // グリッチ表示の持続時間 (ms)
 
 // 基準解像度（スケール計算用）
 const BASE_W = 1920;
@@ -44,10 +44,15 @@ function updateSizes() {
 let lineFbo;
 let walkerPos;
 let walkerPrev;
+let walkerPrevPrev;   // 2フレーム前の位置（曲率計算用）
+let walkerWeight = 0; // 現在の線の太さ（スムージング用）
+let walkerTime = 0;   // 可変速度の時間アキュムレータ
+let walkerCurve = 0;  // スムージングされた曲率
 let albumArt;
 let lastArtUrl = '';
 let artCanvas;
 let artCtx;
+let artIsDark = false; // アルバムアートが暗いかどうか
 
 let trackChars = [];
 let lastTrack  = '';
@@ -55,10 +60,16 @@ let lastTrack  = '';
 let typedText = '';
 
 // BPM グリッチ状態
-let lastBeatTime = 0;   // 前回の拍タイミング (ms)
-let beatCount    = 0;    // 拍カウンター（強拍判定用）
+let lastBeatTime = 0;
+let beatCount    = 0;
 let glitchActive = false;
-let glitchStart  = 0;    // グリッチ開始時刻 (ms)
+let glitchStart  = 0;
+let glitchType   = 0;    // 0: 縦線 1: 横線 2: RGBずれ
+
+// 縦横スキャンの蓄積レイヤー
+let scanFbo;
+let scanFboActive = false; // スキャン蓄積中かどうか
+let scanFadeAlpha = 255;   // フェードアウト用アルファ
 
 // ---------------------------------------------------------------
 // p5.js ライフサイクル
@@ -71,11 +82,15 @@ function setup() {
 
   initLineFbo();
 
-  walkerPos  = createVector(random(W), random(H));
-  walkerPrev = walkerPos.copy();
+  walkerPos      = createVector(random(W), random(H));
+  walkerPrev     = walkerPos.copy();
+  walkerPrevPrev = walkerPos.copy();
 
   artCanvas = document.createElement('canvas');
   artCtx = artCanvas.getContext('2d', { willReadFrequently: true });
+
+  scanFbo = createGraphics(W, H);
+  scanFbo.clear();
 
   Spotify.init();
 }
@@ -108,6 +123,9 @@ function windowResized() {
     c.x = c.x / oldW * W;
     c.y = c.y / oldH * H;
   }
+
+  scanFbo = createGraphics(W, H);
+  scanFbo.clear();
 }
 
 function draw() {
@@ -119,26 +137,55 @@ function draw() {
 
   background(255);
 
-  // 1. 背景の線
-  image(lineFbo, 0, 0);
+  // 1. 背景の線（Perlin noise で描画位置を微かに揺らす）
+  const nt = millis() / 1000.0;
+  const shiftX = (noise(nt * 0.3, 0) - 0.5) * 6 * s;
+  const shiftY = (noise(0, nt * 0.3) - 0.5) * 6 * s;
+  image(lineFbo, shiftX, shiftY);
 
   // 2. アルバムアート（中央）
-  if (glitchActive) {
-    drawArtGlitch();
-  } else {
-    drawArtNormal();
+  drawArtNormal();
+
+  // 3. スキャンエフェクトの蓄積レイヤー（ゆっくりフェードアウト）
+  if (scanFboActive) {
+    scanFadeAlpha = max(scanFadeAlpha - 3.5, 0); // 約1.2秒でフェードアウト
+    if (scanFadeAlpha <= 0) {
+      scanFboActive = false;
+      scanFbo.clear();
+    }
+  }
+  if (scanFboActive) {
+    tint(255, scanFadeAlpha);
+    image(scanFbo, 0, 0);
+    noTint();
   }
 
-  // 3. 曲名
+  // 4. グリッチ発動中の処理
+  if (glitchActive) {
+    if (glitchType <= 1) {
+      // 縦横スキャン → scanFbo に描き込む（蓄積）
+      drawScanGlitch();
+    } else {
+      // RGBずれ → 瞬間的にキャンバスに直接
+      const vx = (W - artSize) / 2;
+      const vy = (H - artSize) / 2;
+      glitchRGBShift(vx, vy);
+    }
+  }
+
+  // 6. 曲名
   drawTrackChars();
 
-  // 4. アーティスト名
+  // 7. 歌詞（最前面）
+  drawLyrics();
+
+  // 8. アーティスト名
   drawArtistName();
 
-  // 5. 入力テキスト
+  // 9. 入力テキスト
   drawTypedText();
 
-  // 6. ログインボタン
+  // 8. ログインボタン
   if (!Spotify.isLoggedIn()) {
     drawLoginButton();
   }
@@ -148,14 +195,35 @@ function draw() {
 // Walker
 // ---------------------------------------------------------------
 function updateWalker() {
+  // 前フレームの曲率から速度を決定（曲がる→極端に減速、直線→やや速い）
+  const speedMult = lerp(1.2, 0.03, walkerCurve);
+  walkerTime += (deltaTime / 1000.0) * speedMult;
+
+  walkerPrevPrev = walkerPrev.copy();
   walkerPrev = walkerPos.copy();
 
-  const t = millis() / 1000.0;
-  walkerPos.x = map(noise(t * LINE_SPEED),       0, 1, 0, W);
-  walkerPos.y = map(noise(t * LINE_SPEED + 1000), 0, 1, 0, H);
+  walkerPos.x = map(noise(walkerTime * LINE_SPEED),       0, 1, 0, W);
+  walkerPos.y = map(noise(walkerTime * LINE_SPEED + 1000), 0, 1, 0, H);
+
+  // 曲率を計算してスムージング
+  const d1 = p5.Vector.sub(walkerPrev, walkerPrevPrev);
+  const d2 = p5.Vector.sub(walkerPos, walkerPrev);
+  const len1 = d1.mag();
+  const len2 = d2.mag();
+  let rawCurve = 0;
+  if (len1 > 0.1 && len2 > 0.1) {
+    const dot = d1.dot(d2) / (len1 * len2);
+    rawCurve = acos(constrain(dot, -1, 1)) / PI;
+  }
+  walkerCurve = lerp(walkerCurve, rawCurve, 0.12);
+
+  // 太さ: 減速(曲がり)で太く、加速(直線)で細く
+  const targetWeight = lerp(LINE_WIDTH * 0.2, LINE_WIDTH * 3.0, walkerCurve) * s;
+  walkerWeight = lerp(walkerWeight, targetWeight, 0.15);
+  const weight = walkerWeight;
 
   lineFbo.stroke(0);
-  lineFbo.strokeWeight(LINE_WIDTH * s);
+  lineFbo.strokeWeight(weight);
   lineFbo.line(walkerPrev.x, walkerPrev.y, walkerPos.x, walkerPos.y);
 }
 
@@ -186,6 +254,18 @@ function updateBeatGlitch() {
     if (random() < chance) {
       glitchActive = true;
       glitchStart = now;
+      // 縦横スキャンが多め、RGBずれはたまに
+      const r = random();
+      if (r < 0.45) glitchType = 0;       // 縦線 45%
+      else if (r < 0.90) glitchType = 1;  // 横線 45%
+      else glitchType = 2;                // RGBずれ 10%
+
+      // 縦横スキャンのときは蓄積レイヤーを有効化
+      if (glitchType <= 1) {
+        scanFbo.clear();
+        scanFadeAlpha = 255;
+        scanFboActive = true;
+      }
     }
   }
 }
@@ -199,12 +279,28 @@ function updateSpotifyTrack() {
     lastTrack = currentTrack;
     generateTrackChars(currentTrack);
     lineFbo.clear();
+
+    // 歌詞を取得
+    const artist = Spotify.getArtistName();
+    Lyrics.fetch(artist, currentTrack);
   }
 
   const artUrl = Spotify.getAlbumArtUrl();
   if (artUrl && artUrl !== lastArtUrl) {
     lastArtUrl = artUrl;
-    loadImage(artUrl, img => { albumArt = img; }, () => { albumArt = null; });
+    loadImage(artUrl, img => {
+      albumArt = img;
+      // 平均輝度を計算してアートが暗いか判定
+      img.loadPixels();
+      let totalBr = 0;
+      const step = 40; // サンプリング間隔（全ピクセルは重いので間引く）
+      let count = 0;
+      for (let i = 0; i < img.pixels.length; i += step * 4) {
+        totalBr += img.pixels[i] * 0.299 + img.pixels[i+1] * 0.587 + img.pixels[i+2] * 0.114;
+        count++;
+      }
+      artIsDark = (totalBr / count) < 128;
+    }, () => { albumArt = null; });
   }
 }
 
@@ -219,15 +315,14 @@ function drawArtNormal() {
 }
 
 // ---------------------------------------------------------------
-// アルバムアート描画（グリッチ）
+// スキャンエフェクト（縦/横を scanFbo に蓄積 → フェードアウト）
 // ---------------------------------------------------------------
-function drawArtGlitch() {
+function drawScanGlitch() {
   if (!albumArt) return;
 
   const vx = (W - artSize) / 2;
   const vy = (H - artSize) / 2;
 
-  // オフスクリーン canvas をアートサイズに合わせる
   if (artCanvas.width !== artSize || artCanvas.height !== artSize) {
     artCanvas.width  = artSize;
     artCanvas.height = artSize;
@@ -236,26 +331,57 @@ function drawArtGlitch() {
   artCtx.drawImage(albumArt.canvas, 0, 0, artSize, artSize);
   const imageData = artCtx.getImageData(0, 0, artSize, artSize);
   const pixels = imageData.data;
-
   const noiseStr = NOISE_STRENGTH * s;
   const fn = frameCount;
 
-  for (let x = 0; x < artSize; x++) {
-    const ny = noise(fn * 0.01 + x * 0.01) * noiseStr;
-    const sy = constrain(floor(ny), 0, artSize - 1);
-
-    const idx = (sy * artSize + x) * 4;
-    const r = pixels[idx];
-    const g = pixels[idx + 1];
-    const b = pixels[idx + 2];
-
-    drawingContext.strokeStyle = `rgb(${r},${g},${b})`;
-    drawingContext.lineWidth = 1;
-    drawingContext.beginPath();
-    drawingContext.moveTo(vx + x, vy);
-    drawingContext.lineTo(vx + x, vy + artSize);
-    drawingContext.stroke();
+  if (glitchType === 0) {
+    // 縦線スキャン → scanFbo に描き込む
+    for (let x = 0; x < artSize; x++) {
+      const ny = noise(fn * 0.01 + x * 0.01) * noiseStr;
+      const sy = constrain(floor(ny), 0, artSize - 1);
+      const idx = (sy * artSize + x) * 4;
+      scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
+      scanFbo.strokeWeight(1);
+      scanFbo.line(vx + x, vy, vx + x, vy + artSize);
+    }
+  } else {
+    // 横線スキャン → scanFbo に描き込む
+    for (let y = 0; y < artSize; y++) {
+      const nx = noise(fn * 0.01 + y * 0.01 + 500) * noiseStr;
+      const sx = constrain(floor(nx), 0, artSize - 1);
+      const idx = (y * artSize + sx) * 4;
+      scanFbo.stroke(pixels[idx], pixels[idx+1], pixels[idx+2]);
+      scanFbo.strokeWeight(1);
+      scanFbo.line(vx, vy + y, vx + artSize, vy + y);
+    }
   }
+}
+
+// RGB チャンネルずれ（赤・青を別方向にずらして重ねる）
+function glitchRGBShift(vx, vy) {
+  const ctx = drawingContext;
+  const shiftX = floor(random(5, 15) * s);
+  const shiftY = floor(random(-5, 5) * s);
+
+  // 赤チャンネルをずらして合成
+  ctx.globalCompositeOperation = 'screen';
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(vx, vy, artSize, artSize);
+
+  // 赤方向
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(
+    ctx.canvas,
+    vx, vy, artSize, artSize,
+    vx + shiftX, vy + shiftY, artSize, artSize
+  );
+
+  // 青方向（反対にずらす）
+  ctx.globalCompositeOperation = 'screen';
+  ctx.fillStyle = `rgba(0,0,255,0.12)`;
+  ctx.fillRect(vx - shiftX, vy - shiftY, artSize, artSize);
+
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 // ---------------------------------------------------------------
@@ -305,7 +431,86 @@ function drawArtistName() {
   textAlign(RIGHT, TOP);
   fill(0);
   noStroke();
-  text(artist, W - 20, 60);
+  const tx = W - 20;
+  const ty = 60;
+  text(artist, tx, ty);
+
+  // 下線
+  const tw = textWidth(artist);
+  stroke(0);
+  strokeWeight(4);
+  strokeCap(PROJECT); // 先端90度
+  const underY = ty + FONT_MEDIUM + 4;
+  line(tx - tw, underY, tx, underY);
+  pop();
+}
+
+// ---------------------------------------------------------------
+// 歌詞表示（全歌詞を背景に敷き詰め、現在行を黒く）
+// ---------------------------------------------------------------
+const LYRICS_ALPHA = 30;      // 通常行の薄さ
+const LYRICS_FADE_MS = 400;   // 現在行フェードインの時間 (ms)
+let lyricsPrevIdx = -1;       // 前フレームの現在行インデックス
+let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
+
+function drawLyrics() {
+  if (!Lyrics.hasLyrics()) return;
+
+  const lines = Lyrics.getLines();
+  const progressMs = Spotify.getProgressMs();
+  const currentIdx = Lyrics.getCurrentIndex(progressMs);
+
+  // 行が切り替わったらタイムスタンプを記録
+  if (currentIdx !== lyricsPrevIdx) {
+    lyricsTransAt = millis();
+    lyricsPrevIdx = currentIdx;
+  }
+
+  const margin = 30;
+  const availH = H - margin * 2;
+  const lineCount = lines.length;
+
+  // 全行が画面に収まるように行間を計算し、フォントサイズも調整
+  const leading = min(34, availH / max(lineCount, 1));
+  const sz = min(24, leading * 0.75);
+
+  // 全体の高さから開始Y位置を算出して上下中央揃え
+  const totalH = lineCount * leading;
+  const startY = (H - totalH) / 2;
+
+  push();
+  textAlign(CENTER, TOP);
+  noStroke();
+
+  for (let i = 0; i < lineCount; i++) {
+    const y = startY + i * leading;
+    if (y > H - margin) break;
+
+    // 背景の明るさをサンプリングして白黒を決定
+    const sampleY = constrain(floor(y + sz / 2), 0, H - 1);
+    let brightnessSum = 0;
+    const sampleCount = 7;
+    for (let j = 0; j < sampleCount; j++) {
+      const sx = constrain(floor(W / 2 + (j - 3) * 50), 0, W - 1);
+      const c = get(sx, sampleY);
+      brightnessSum += (c[0] + c[1] + c[2]) / 3;
+    }
+    const avgBrightness = brightnessSum / sampleCount;
+    const textColor = avgBrightness < 128 ? 255 : 0;
+
+    if (i === currentIdx) {
+      const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
+      const easedT = t * t * (3 - 2 * t);  // smoothstep
+      textSize(sz * 1.6);
+      fill(textColor, lerp(LYRICS_ALPHA, 255, easedT));
+    } else {
+      textSize(sz);
+      fill(textColor, LYRICS_ALPHA);
+    }
+
+    text(lines[i].text, W / 2, y);
+  }
+
   pop();
 }
 
