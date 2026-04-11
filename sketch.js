@@ -477,15 +477,34 @@ function glitchRGBShift(vx, vy) {
 function generateTrackChars(track) {
   trackChars = [];
 
+  // ジャケットの領域（マージン付き）
+  const margin = 20;
+  const artLeft   = (W - artSize) / 2 - margin;
+  const artRight  = (W + artSize) / 2 + margin;
+  const artTop    = (H - artSize) / 2 - margin;
+  const artBottom = (H + artSize) / 2 + margin;
+
   for (const ch of track) {
     const sz = random(32, 120);
     textSize(sz);
     const cw = textWidth(ch);
 
+    let x, y;
+    let attempts = 0;
+    do {
+      x = random(cw, W - cw);
+      y = random(sz, H - sz);
+      attempts++;
+    } while (
+      attempts < 100 &&
+      x + cw > artLeft && x - cw < artRight &&
+      y + sz > artTop && y - sz < artBottom
+    );
+
     trackChars.push({
       ch,
-      x:     random(cw, W - cw),
-      y:     random(sz, H - sz),
+      x,
+      y,
       angle: random(-PI / 4, PI / 4),
       size:  sz,
     });
