@@ -366,9 +366,14 @@ function updateSpotifyTrack() {
           for (let y = floor(gy * ph); y < floor((gy + 1) * ph); y += d) {
             for (let x = floor(gx * pw); x < floor((gx + 1) * pw); x += d) {
               const idx = (y * img.width + x) * 4;
-              pr += img.pixels[idx];
-              pg += img.pixels[idx + 1];
-              pb += img.pixels[idx + 2];
+              const cr = img.pixels[idx];
+              const cg = img.pixels[idx + 1];
+              const cb = img.pixels[idx + 2];
+              // 白に近い色はスキップ
+              if (cr > 220 && cg > 220 && cb > 220) continue;
+              pr += cr;
+              pg += cg;
+              pb += cb;
               pc++;
             }
           }
