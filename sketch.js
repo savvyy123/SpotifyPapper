@@ -1,32 +1,39 @@
 // sketch.js — WalkPaper メイン p5.js スケッチ
-// 元の oF 版の動作を Web に移植
+// oF 版 (ofApp.cpp) を忠実に Web に移植
 //
 // 描画レイヤー構成:
-//   1. bgLayer  … Perlin ノイズウォーカーが線を蓄積（永続）
-//   2. Canvas   … bgLayer をコピー → 動画 → グリッチ → テキスト
+//   1. lineFbo  … 単一ウォーカーの黒線を蓄積（曲変更でクリア）
+//   2. Canvas   … 白背景 → lineFbo → 動画(+グリッチ) → テキスト
 
 // ---------------------------------------------------------------
-// 定数
+// 定数（oF 版の固定パラメータに対応）
 // ---------------------------------------------------------------
 const W = 1920;
 const H = 1080;
-const NUM_WALKERS  = 60;
 const LINE_WIDTH   = 4;
 const LINE_SPEED   = 0.5;
-const THRESHOLD    = 0.01;   // グリッチ発動の音量閾値
-const SCALE        = 30.0;   // 音量 → グリッチ強度の係数
-const VIDEO_SIZE   = 400;    // 動画の表示サイズ (px)
+const THRESHOLD    = 0.01;   // グリッチ発動閾値 (scaledVol)
+const VOL_SCALE    = 30.0;   // smoothedVol → scaledVol 係数
+const VIDEO_SIZE   = 400;
+const NOISE_STRENGTH = 200.0; // グリッチのノイズ振幅
 const FONT_FAMILY  = 'Noto Sans JP';
+const FONT_LARGE   = 72;
+const FONT_MEDIUM  = 32;
 
 // ---------------------------------------------------------------
 // 状態
 // ---------------------------------------------------------------
-let bgLayer;    // p5.Graphics — ウォーカーの線を蓄積するオフスクリーン
-let walkers = [];
-let video;
+let lineFbo;        // p5.Graphics — 線を蓄積するオフスクリーン
+let walkerPos;      // 現在位置
+let walkerPrev;     // 前フレーム位置
+let video;          // HTML video 要素
+let videoCanvas;    // 動画ピクセル読み取り用オフスクリーン canvas
+let videoCtx;
 
-let trackChars = []; // {ch, x, y, angle, size, alpha}
+let trackChars = [];   // {ch, x, y, angle}
 let lastTrack  = '';
+
+let typedText = '';    // キー入力テキスト
 
 // ---------------------------------------------------------------
 // p5.js ライフサイクル
@@ -36,27 +43,28 @@ function setup() {
   textFont(FONT_FAMILY);
   frameRate(60);
 
-  // オフスクリーンレイヤー（背景の線を蓄積する）
-  bgLayer = createGraphics(W, H);
-  bgLayer.background(0);
-  bgLayer.strokeWeight(LINE_WIDTH);
-  bgLayer.noFill();
+  // 線の蓄積レイヤー（白背景・透明クリア → oF の ofClear(255,255,255,0) に対応）
+  lineFbo = createGraphics(W, H);
+  lineFbo.clear();
+  lineFbo.strokeWeight(LINE_WIDTH);
+  lineFbo.stroke(0);
+  lineFbo.noFill();
 
-  // ウォーカー初期化
-  for (let i = 0; i < NUM_WALKERS; i++) {
-    walkers.push({
-      x: random(W),
-      y: random(H),
-      t: random(1000), // ノイズの時間オフセット
-    });
-  }
+  // ウォーカー初期位置
+  walkerPos  = createVector(random(W), random(H));
+  walkerPrev = walkerPos.copy();
 
   // 動画要素
   video = document.getElementById('walkVideo');
   video.play().catch(() => {
-    // 自動再生がブロックされた場合はクリックで再生
     document.addEventListener('click', () => video.play(), { once: true });
   });
+
+  // 動画ピクセル読み取り用の小さな canvas
+  videoCanvas = document.createElement('canvas');
+  videoCanvas.width  = VIDEO_SIZE;
+  videoCanvas.height = VIDEO_SIZE;
+  videoCtx = videoCanvas.getContext('2d', { willReadFrequently: true });
 
   // マイク + Spotify 初期化
   Audio.init().catch(e => console.warn('Audio init failed:', e));
@@ -64,31 +72,38 @@ function setup() {
 }
 
 function draw() {
-  // 1. ウォーカーを bgLayer に描画（蓄積）
-  updateWalkers();
+  // ---- update ----
+  updateSpotifyTrack();
+  updateWalker();
 
-  // 2. bgLayer をキャンバスに転写
-  image(bgLayer, 0, 0);
-
-  // 3. 動画を中央に描画
-  drawVideo();
-
-  // 4. マイク音量でグリッチ
+  // 音量スケーリング（oF: scaledVol = clamp(smoothedVol * 30, 0, 1)）
   const rms = Audio.getRMS();
-  if (rms > THRESHOLD) {
-    applyGlitch(rms);
+  const scaledVol = constrain(rms * VOL_SCALE, 0, 1);
+
+  // ---- draw ----
+  background(255); // 白背景
+
+  // 1. 背景の線（蓄積レイヤー）
+  image(lineFbo, 0, 0);
+
+  // 2. 動画（中央 400×400）
+  if (scaledVol < THRESHOLD) {
+    drawVideoNormal();
+  } else {
+    drawVideoGlitch();
   }
 
-  // 5. 曲名テキスト（1文字ずつランダム配置）
-  const currentTrack = Spotify.getTrackName();
-  if (currentTrack && currentTrack !== lastTrack) {
-    lastTrack = currentTrack;
-    generateTrackChars(currentTrack);
-  }
+  // 3. 曲名（1文字ずつランダム配置・回転）
   drawTrackChars();
 
-  // 6. アーティスト名（右上）
+  // 4. アーティスト名（右上）
   drawArtistName();
+
+  // 5. 入力テキスト（中央・白文字）
+  drawTypedText();
+
+  // 6. 音量バー（左下・デバッグ用）
+  drawVolumeBar(scaledVol);
 
   // 7. 未ログイン時にログインボタン
   if (!Spotify.isLoggedIn()) {
@@ -97,81 +112,81 @@ function draw() {
 }
 
 // ---------------------------------------------------------------
-// Perlin ノイズウォーカー
+// Walker（単一・Perlin ノイズで座標マッピング）
 // ---------------------------------------------------------------
-function updateWalkers() {
-  for (const w of walkers) {
-    // ノイズ場から進行方向を決定
-    const angle = noise(w.x * 0.003, w.y * 0.003, w.t * 0.01) * TWO_PI * 4;
-    const nx = w.x + cos(angle) * LINE_SPEED;
-    const ny = w.y + sin(angle) * LINE_SPEED;
+function updateWalker() {
+  walkerPrev = walkerPos.copy();
 
-    // 色: 青〜紫系、低アルファで蓄積効果
-    const r = noise(w.t * 0.008)             * 80  + 20;
-    const g = noise(w.t * 0.008 + 100)       * 60  + 20;
-    const b = noise(w.t * 0.008 + 200)       * 200 + 55;
-    bgLayer.stroke(r, g, b, 35);
-    bgLayer.line(w.x, w.y, nx, ny);
+  // oF: ofNoise(t * lineSpeed) → 0〜1 をウィンドウ幅にマップ
+  const t = millis() / 1000.0; // ofGetElapsedTimef() 相当
+  walkerPos.x = map(noise(t * LINE_SPEED),         0, 1, 0, W);
+  walkerPos.y = map(noise(t * LINE_SPEED + 1000),   0, 1, 0, H);
 
-    w.x = nx;
-    w.y = ny;
-    w.t += 0.5;
+  // 線を蓄積レイヤーに描画
+  lineFbo.stroke(0);
+  lineFbo.strokeWeight(LINE_WIDTH);
+  lineFbo.line(walkerPrev.x, walkerPrev.y, walkerPos.x, walkerPos.y);
+}
 
-    // 画面端でループ
-    if (w.x < 0)  w.x = W;
-    if (w.x > W)  w.x = 0;
-    if (w.y < 0)  w.y = H;
-    if (w.y > H)  w.y = 0;
+// ---------------------------------------------------------------
+// Spotify 曲情報の監視
+// ---------------------------------------------------------------
+function updateSpotifyTrack() {
+  const currentTrack = Spotify.getTrackName();
+  if (currentTrack && currentTrack !== lastTrack) {
+    lastTrack = currentTrack;
+    generateTrackChars(currentTrack);
+
+    // 曲が変わったら線をリセット（oF: lineFbo.begin(); ofClear(...); lineFbo.end();）
+    lineFbo.clear();
   }
 }
 
 // ---------------------------------------------------------------
-// 動画描画
+// 動画描画（通常）
 // ---------------------------------------------------------------
-function drawVideo() {
+function drawVideoNormal() {
   if (!video || video.readyState < 2) return;
-
   const vx = (W - VIDEO_SIZE) / 2;
   const vy = (H - VIDEO_SIZE) / 2;
   drawingContext.drawImage(video, vx, vy, VIDEO_SIZE, VIDEO_SIZE);
 }
 
 // ---------------------------------------------------------------
-// グリッチエフェクト（動画エリアのみ）
+// 動画描画（グリッチ — oF 版の縦線スキャン＋ノイズ Y）
 // ---------------------------------------------------------------
-function applyGlitch(rms) {
+function drawVideoGlitch() {
   if (!video || video.readyState < 2) return;
 
   const vx = (W - VIDEO_SIZE) / 2;
   const vy = (H - VIDEO_SIZE) / 2;
 
-  // 音量に応じてスライス数を増やす
-  const sliceCount = floor(min((rms - THRESHOLD) * SCALE * 500, 25));
+  // 動画をオフスクリーン canvas に描画してピクセルを読み取る
+  videoCtx.drawImage(video, 0, 0, VIDEO_SIZE, VIDEO_SIZE);
+  const imageData = videoCtx.getImageData(0, 0, VIDEO_SIZE, VIDEO_SIZE);
+  const pixels = imageData.data;
 
-  for (let i = 0; i < sliceCount; i++) {
-    const sliceY  = floor(random(VIDEO_SIZE));
-    const sliceH  = floor(random(2, 18));
-    const shiftX  = floor(random(-40, 40));
-    const srcX    = max(0, -shiftX);   // クリッピング
-    const dstX    = max(0,  shiftX);
-    const copyW   = VIDEO_SIZE - abs(shiftX);
+  const fn = frameCount; // oF: ofGetFrameNum()
 
-    if (copyW <= 0) continue;
+  for (let x = 0; x < VIDEO_SIZE; x++) {
+    // oF: float y = ofNoise(ofGetFrameNum()*0.01 + x*0.01) * noiseStrength
+    const ny = noise(fn * 0.01 + x * 0.01) * NOISE_STRENGTH;
+    const sy = constrain(floor(ny), 0, VIDEO_SIZE - 1);
+    const sx = constrain(x, 0, VIDEO_SIZE - 1);
 
-    // キャンバス上の該当スライスを横ずれさせて再描画
-    drawingContext.drawImage(
-      drawingContext.canvas,
-      vx + srcX,          vy + sliceY, copyW, sliceH, // src
-      vx + dstX,          vy + sliceY, copyW, sliceH  // dst
-    );
+    // ピクセルカラー取得
+    const idx = (sy * VIDEO_SIZE + sx) * 4;
+    const r = pixels[idx];
+    const g = pixels[idx + 1];
+    const b = pixels[idx + 2];
 
-    // ランダムに色チャンネルをずらす（RGBずらし）
-    if (random() < 0.3) {
-      drawingContext.globalCompositeOperation = 'screen';
-      drawingContext.fillStyle = `rgba(255,0,0,0.15)`;
-      drawingContext.fillRect(vx + dstX + random(-5, 5), vy + sliceY, copyW, sliceH);
-      drawingContext.globalCompositeOperation = 'source-over';
-    }
+    // 縦線を描画
+    drawingContext.strokeStyle = `rgb(${r},${g},${b})`;
+    drawingContext.lineWidth = 1;
+    drawingContext.beginPath();
+    drawingContext.moveTo(vx + x, vy);
+    drawingContext.lineTo(vx + x, vy + VIDEO_SIZE);
+    drawingContext.stroke();
   }
 }
 
@@ -180,15 +195,18 @@ function applyGlitch(rms) {
 // ---------------------------------------------------------------
 function generateTrackChars(track) {
   trackChars = [];
+  textSize(FONT_LARGE);
+
   for (const ch of track) {
-    if (ch === ' ') continue; // スペースはスキップ
+    // oF ではスペースも含めて配置している
+    const cw = textWidth(ch);
+    const ch2 = FONT_LARGE; // 概算の文字高さ
+
     trackChars.push({
       ch,
-      x:     random(W),
-      y:     random(H),
-      angle: random(-PI / 4, PI / 4),
-      size:  random(32, 90),
-      alpha: random(140, 255),
+      x:     random(cw, W - cw),
+      y:     random(ch2, H - ch2),
+      angle: random(-PI / 4, PI / 4), // oF: ofRandom(-45, 45) → deg → rad
     });
   }
 }
@@ -198,9 +216,9 @@ function drawTrackChars() {
     push();
     translate(c.x, c.y);
     rotate(c.angle);
-    textSize(c.size);
+    textSize(FONT_LARGE);
     textAlign(CENTER, CENTER);
-    fill(255, 255, 255, c.alpha);
+    fill(0); // oF: ofSetColor(0) → 黒
     noStroke();
     text(c.ch, 0, 0);
     pop();
@@ -208,18 +226,49 @@ function drawTrackChars() {
 }
 
 // ---------------------------------------------------------------
-// アーティスト名（右上）
+// アーティスト名（右上・中サイズ）
 // ---------------------------------------------------------------
 function drawArtistName() {
   const artist = Spotify.getArtistName();
   if (!artist) return;
 
   push();
-  textSize(28);
+  textSize(FONT_MEDIUM);
   textAlign(RIGHT, TOP);
-  fill(255, 255, 255, 200);
+  fill(0); // 黒
   noStroke();
-  text(artist, W - 32, 32);
+  // oF: x = width - bounds.width - 20, y = 60
+  text(artist, W - 20, 60);
+  pop();
+}
+
+// ---------------------------------------------------------------
+// 入力テキスト（中央・白・大サイズ）
+// ---------------------------------------------------------------
+function drawTypedText() {
+  if (!typedText) return;
+
+  push();
+  textSize(FONT_LARGE);
+  textAlign(CENTER, CENTER);
+  fill(255); // oF: ofSetColor(255) → 白
+  noStroke();
+  text(typedText, W / 2, H / 2);
+  pop();
+}
+
+// ---------------------------------------------------------------
+// 音量バー（左下・デバッグ用）
+// ---------------------------------------------------------------
+function drawVolumeBar(scaledVol) {
+  const barW = 200;
+  const barH = 20;
+  const filled = barW * scaledVol;
+
+  push();
+  fill(0);
+  noStroke();
+  rect(20, H - 40, filled, barH);
   pop();
 }
 
@@ -228,7 +277,7 @@ function drawArtistName() {
 // ---------------------------------------------------------------
 function drawLoginButton() {
   const bw = 220, bh = 52;
-  const bx = W / 2, by = H / 2;
+  const bx = W / 2, by = H / 2 + 250; // 動画の下あたり
 
   push();
   rectMode(CENTER);
@@ -236,7 +285,7 @@ function drawLoginButton() {
   noStroke();
   rect(bx, by, bw, bh, 26);
 
-  fill(0);
+  fill(255);
   textSize(18);
   textAlign(CENTER, CENTER);
   text('Spotify に接続', bx, by);
@@ -248,7 +297,8 @@ function drawLoginButton() {
 // ---------------------------------------------------------------
 function mousePressed() {
   if (!Spotify.isLoggedIn()) {
-    if (abs(mouseX - W / 2) < 110 && abs(mouseY - H / 2) < 26) {
+    const bx = W / 2, by = H / 2 + 250;
+    if (abs(mouseX - bx) < 110 && abs(mouseY - by) < 26) {
       Spotify.login();
     }
   }
@@ -256,10 +306,22 @@ function mousePressed() {
 
 function keyPressed() {
   if (keyCode === ESCAPE) {
+    // oF: ofToggleFullscreen()
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
       document.documentElement.requestFullscreen().catch(() => {});
     }
+    return false; // ESC のデフォルト動作を抑止
+  } else if (keyCode === BACKSPACE) {
+    // oF: typedText.pop_back()
+    typedText = typedText.slice(0, -1);
+    return false;
+  } else if (keyCode === ENTER || keyCode === RETURN) {
+    // oF: typedText.clear()
+    typedText = '';
+    return false;
+  } else if (key.length === 1) {
+    typedText += key;
   }
 }
