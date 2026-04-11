@@ -478,9 +478,9 @@ function generateTrackChars(track) {
 }
 
 // 波線の設定
-const WAVE_NUM_LINES = 6;    // 波線の本数
-const WAVE_FREQ = 3;         // 波の周波数
-const WAVE_HEIGHT = 10;      // 波の振幅
+const WAVE_NUM_LINES = 3;    // 波線の本数
+const WAVE_FREQ = 1;         // 波の周波数
+const WAVE_HEIGHT = 4;       // 波の振幅
 const WAVE_RES = 30;         // 波の解像度
 
 function drawTrackChars() {
