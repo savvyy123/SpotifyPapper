@@ -81,6 +81,9 @@ const Spotify = (() => {
       }),
     });
 
+    // URL から code パラメータを常に消す
+    window.history.replaceState({}, '', window.location.pathname);
+
     if (!res.ok) {
       console.error('Token exchange failed:', await res.text());
       return false;
@@ -88,9 +91,6 @@ const Spotify = (() => {
 
     const data = await res.json();
     saveToken(data.access_token, data.expires_in);
-
-    // URL から code を消す
-    window.history.replaceState({}, '', window.location.pathname);
     return true;
   }
 
@@ -160,11 +160,16 @@ const Spotify = (() => {
       const res = await fetch(`https://api.spotify.com/v1/audio-features/${trackId}`, {
         headers: { Authorization: 'Bearer ' + accessToken },
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.warn('audio-features failed, using fallback BPM');
+        bpm = 120; // フォールバック
+        return;
+      }
       const data = await res.json();
-      bpm = data.tempo || 0;
+      bpm = data.tempo || 120;
     } catch (e) {
-      // BPM 取得失敗は無視
+      console.warn('audio-features error, using fallback BPM');
+      bpm = 120;
     }
   }
 

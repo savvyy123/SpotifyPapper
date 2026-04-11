@@ -14,9 +14,9 @@ const NOISE_STRENGTH = 200.0;
 const FONT_FAMILY    = 'Noto Sans JP';
 
 // BPM グリッチ設定
-const GLITCH_CHANCE      = 0.30;  // 各拍でグリッチが発動する確率
-const GLITCH_DOWNBEAT    = 0.60;  // 強拍（1拍目）の発動確率
-const GLITCH_DURATION_MS = 120;   // グリッチ表示の持続時間 (ms)
+const GLITCH_CHANCE      = 0.45;  // 各拍でグリッチが発動する確率
+const GLITCH_DOWNBEAT    = 0.80;  // 強拍（1拍目）の発動確率
+const GLITCH_DURATION_MS = 250;   // グリッチ表示の持続時間 (ms)
 
 // 基準解像度（スケール計算用）
 const BASE_W = 1920;
