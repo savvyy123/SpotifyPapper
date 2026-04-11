@@ -187,11 +187,11 @@ function draw() {
   // 6. 曲名
   drawTrackChars();
 
-  // 7. 歌詞（最前面）
-  drawLyrics();
+  // 7. アーティスト名（中央）
+  const lyricsStartY = drawArtistName();
 
-  // 8. アーティスト名
-  drawArtistName();
+  // 8. 歌詞（アーティスト名の下）
+  drawLyrics(lyricsStartY);
 
   // 8. ログインボタン
   if (!Spotify.isLoggedIn()) {
@@ -691,29 +691,23 @@ function drawTrackChars() {
 }
 
 // ---------------------------------------------------------------
-// アーティスト名（右上）
+// アーティスト名（ジャケット下・中央）
 // ---------------------------------------------------------------
 function drawArtistName() {
   const artist = Spotify.getArtistName();
   if (!artist) return;
 
   push();
+  textFont(LYRICS_FONT);
   textSize(FONT_MEDIUM);
-  textAlign(RIGHT, TOP);
+  textAlign(CENTER, TOP);
   fill(0);
   noStroke();
-  const tx = W - 20;
-  const ty = 60;
-  text(artist, tx, ty);
-
-  // 下線
-  const tw = textWidth(artist);
-  stroke(0);
-  strokeWeight(4);
-  strokeCap(PROJECT); // 先端90度
-  const underY = ty + FONT_MEDIUM + 4;
-  line(tx - tw, underY, tx, underY);
+  const ty = (H + artSize) / 2 + 20;
+  text(artist, W / 2, ty);
   pop();
+
+  return ty + FONT_MEDIUM + 10; // 歌詞の開始Y位置を返す
 }
 
 // ---------------------------------------------------------------
@@ -724,7 +718,7 @@ const LYRICS_FADE_MS = 400;   // 現在行フェードインの時間 (ms)
 let lyricsPrevIdx = -1;       // 前フレームの現在行インデックス
 let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
 
-function drawLyrics() {
+function drawLyrics(topY) {
   if (!Lyrics.hasLyrics()) return;
 
   const lines = Lyrics.getLines();
@@ -738,16 +732,13 @@ function drawLyrics() {
   }
 
   const margin = 30;
-  const availH = H - margin * 2;
+  const startY = topY || (H + artSize) / 2 + 60;
+  const availH = H - startY - margin;
   const lineCount = lines.length;
 
-  // 全行が画面に収まるように行間を計算し、フォントサイズも調整
+  // 全行が収まるように行間を計算し、フォントサイズも調整
   const leading = min(48, availH / max(lineCount, 1));
   const sz = min(34, leading * 0.7);
-
-  // 全体の高さから開始Y位置を算出して上下中央揃え
-  const totalH = lineCount * leading;
-  const startY = (H - totalH) / 2;
 
   push();
   textAlign(CENTER, TOP);
