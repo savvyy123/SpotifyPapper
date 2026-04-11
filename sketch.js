@@ -35,7 +35,7 @@ function updateSizes() {
   W = windowWidth;
   H = windowHeight;
   s = min(W / BASE_W, H / BASE_H);
-  artSize = floor(400 * s);
+  artSize = floor(650 * s);
 }
 
 // ---------------------------------------------------------------
@@ -263,17 +263,18 @@ function drawArtGlitch() {
 // ---------------------------------------------------------------
 function generateTrackChars(track) {
   trackChars = [];
-  textSize(FONT_LARGE);
 
   for (const ch of track) {
+    const sz = random(32, 120);
+    textSize(sz);
     const cw = textWidth(ch);
-    const ch2 = FONT_LARGE;
 
     trackChars.push({
       ch,
       x:     random(cw, W - cw),
-      y:     random(ch2, H - ch2),
+      y:     random(sz, H - sz),
       angle: random(-PI / 4, PI / 4),
+      size:  sz,
     });
   }
 }
@@ -283,7 +284,7 @@ function drawTrackChars() {
     push();
     translate(c.x, c.y);
     rotate(c.angle);
-    textSize(FONT_LARGE);
+    textSize(c.size);
     textAlign(CENTER, CENTER);
     fill(0);
     noStroke();
