@@ -7,7 +7,7 @@ const Spotify = (() => {
   // ---------------------------------------------------------------
   const CLIENT_ID = '3bc5ba6756a64cf8a6275e18dd3b306d'; // ← Spotify Developer Dashboard から取得
   const REDIRECT_URI = 'http://127.0.0.1:8888/';
-  const SCOPES = 'user-read-currently-playing user-read-playback-state';
+  const SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state';
   const POLL_INTERVAL_MS = 5000;
 
   // ---------------------------------------------------------------
@@ -19,6 +19,9 @@ const Spotify = (() => {
   let artistName = '';
   let albumArtUrl = '';
   let bpm = 0;
+  let isPlaying = false;
+  let shuffleState = false;
+  let repeatState = 'off'; // 'off' | 'context' | 'track'
 
   // ---------------------------------------------------------------
   // PKCE ユーティリティ
@@ -116,12 +119,12 @@ const Spotify = (() => {
     if (!accessToken) return;
 
     try {
-      const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+      // /me/player で再生状態（shuffle, repeat）も取得
+      const res = await fetch('https://api.spotify.com/v1/me/player', {
         headers: { Authorization: 'Bearer ' + accessToken },
       });
 
       if (res.status === 401) {
-        // トークン期限切れ
         accessToken = null;
         localStorage.removeItem('spotify_token');
         return;
@@ -129,14 +132,19 @@ const Spotify = (() => {
       if (res.status === 204 || !res.ok) return; // 再生なし
 
       const data = await res.json();
-      if (data && data.item) {
+
+      // 再生状態の更新
+      isPlaying = data.is_playing || false;
+      shuffleState = data.shuffle_state || false;
+      repeatState = data.repeat_state || 'off';
+
+      if (data.item) {
         const newTrack = data.item.name;
         const newArtist = data.item.artists.map(a => a.name).join(', ');
 
         if (newTrack !== trackName) {
           trackName = newTrack;
           artistName = newArtist;
-          // アルバムジャケット画像（最大サイズ: 640×640）
           const images = data.item.album.images;
           albumArtUrl = images.length > 0 ? images[0].url : '';
           await fetchAudioFeatures(data.item.id);
@@ -161,6 +169,68 @@ const Spotify = (() => {
   }
 
   // ---------------------------------------------------------------
+  // 再生コントロール
+  // ---------------------------------------------------------------
+  async function togglePlay() {
+    if (!accessToken) return;
+    const endpoint = isPlaying ? 'pause' : 'play';
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player/${endpoint}`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      isPlaying = !isPlaying;
+    } catch (e) { console.warn('togglePlay error:', e); }
+  }
+
+  async function skipNext() {
+    if (!accessToken) return;
+    try {
+      await fetch('https://api.spotify.com/v1/me/player/next', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+    } catch (e) { console.warn('skipNext error:', e); }
+  }
+
+  async function skipPrev() {
+    if (!accessToken) return;
+    try {
+      await fetch('https://api.spotify.com/v1/me/player/previous', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+    } catch (e) { console.warn('skipPrev error:', e); }
+  }
+
+  async function toggleShuffle() {
+    if (!accessToken) return;
+    const next = !shuffleState;
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player/shuffle?state=${next}`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      shuffleState = next;
+    } catch (e) { console.warn('toggleShuffle error:', e); }
+  }
+
+  async function cycleRepeat() {
+    if (!accessToken) return;
+    // off → context → track → off
+    const order = ['off', 'context', 'track'];
+    const idx = (order.indexOf(repeatState) + 1) % order.length;
+    const next = order[idx];
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${next}`, {
+        method: 'PUT',
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      repeatState = next;
+    } catch (e) { console.warn('cycleRepeat error:', e); }
+  }
+
+  // ---------------------------------------------------------------
   // 初期化
   // ---------------------------------------------------------------
   async function init() {
@@ -181,11 +251,20 @@ const Spotify = (() => {
   // ---------------------------------------------------------------
   // 公開 API
   // ---------------------------------------------------------------
-  function getTrackName()  { return trackName; }
-  function getArtistName() { return artistName; }
-  function getAlbumArtUrl(){ return albumArtUrl; }
-  function getBPM()        { return bpm; }
-  function isLoggedIn()    { return !!accessToken; }
+  function getTrackName()    { return trackName; }
+  function getArtistName()   { return artistName; }
+  function getAlbumArtUrl()  { return albumArtUrl; }
+  function getBPM()          { return bpm; }
+  function getIsPlaying()    { return isPlaying; }
+  function getShuffleState() { return shuffleState; }
+  function getRepeatState()  { return repeatState; }
+  function isLoggedIn()      { return !!accessToken; }
 
-  return { init, login, getTrackName, getArtistName, getAlbumArtUrl, getBPM, isLoggedIn };
+  return {
+    init, login,
+    getTrackName, getArtistName, getAlbumArtUrl, getBPM,
+    getIsPlaying, getShuffleState, getRepeatState,
+    isLoggedIn,
+    togglePlay, skipNext, skipPrev, toggleShuffle, cycleRepeat,
+  };
 })();

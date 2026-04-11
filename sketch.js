@@ -97,13 +97,15 @@ function draw() {
   // 5. 入力テキスト（中央・白文字）
   drawTypedText();
 
-  // 6. 音量バー（左下・デバッグ用）
-  drawVolumeBar(scaledVol);
-
-  // 7. 未ログイン時にログインボタン
-  if (!Spotify.isLoggedIn()) {
+  // 6. 再生コントロール or ログインボタン
+  if (Spotify.isLoggedIn()) {
+    drawControls();
+  } else {
     drawLoginButton();
   }
+
+  // 7. 音量バー（左下・デバッグ用）
+  drawVolumeBar(scaledVol);
 }
 
 // ---------------------------------------------------------------
@@ -260,6 +262,147 @@ function drawTypedText() {
 }
 
 // ---------------------------------------------------------------
+// 再生コントロール（Spotify 風）
+// ---------------------------------------------------------------
+// ボタン配置定数
+const CTRL_Y     = H / 2 + VIDEO_SIZE / 2 + 50; // アルバムアートの下
+const CTRL_CX    = W / 2;                        // 中央 X
+const BTN_GAP    = 64;                            // ボタン間隔
+const PLAY_R     = 24;                            // 再生ボタン半径
+const SMALL_R    = 14;                            // 小ボタン半径
+const SPOTIFY_GREEN = [30, 215, 96];
+
+function drawControls() {
+  if (!Spotify.isLoggedIn()) return;
+
+  const shuffleOn = Spotify.getShuffleState();
+  const repeatMode = Spotify.getRepeatState();
+  const playing = Spotify.getIsPlaying();
+
+  // --- シャッフル ---
+  drawShuffleIcon(CTRL_CX - BTN_GAP * 2, CTRL_Y, shuffleOn);
+
+  // --- 前の曲 ---
+  drawPrevIcon(CTRL_CX - BTN_GAP, CTRL_Y);
+
+  // --- 再生 / 一時停止 ---
+  drawPlayPauseIcon(CTRL_CX, CTRL_Y, playing);
+
+  // --- 次の曲 ---
+  drawNextIcon(CTRL_CX + BTN_GAP, CTRL_Y);
+
+  // --- リピート ---
+  drawRepeatIcon(CTRL_CX + BTN_GAP * 2, CTRL_Y, repeatMode);
+}
+
+function drawPlayPauseIcon(cx, cy, playing) {
+  push();
+  // 背景の丸
+  fill(0);
+  noStroke();
+  ellipse(cx, cy, PLAY_R * 2);
+
+  fill(255);
+  if (playing) {
+    // 一時停止 ❚❚
+    const bw = 5, bh = 16, gap = 4;
+    rectMode(CENTER);
+    rect(cx - gap - bw / 2 + gap, cy, bw, bh, 1);
+    rect(cx + gap + bw / 2 - gap, cy, bw, bh, 1);
+  } else {
+    // 再生 ▶
+    triangle(cx - 7, cy - 10, cx - 7, cy + 10, cx + 11, cy);
+  }
+  pop();
+}
+
+function drawPrevIcon(cx, cy) {
+  push();
+  fill(0);
+  noStroke();
+  // |◁
+  const s = SMALL_R * 0.7;
+  rect(cx - s - 2, cy - s, 3, s * 2);
+  triangle(cx + s, cy - s, cx + s, cy + s, cx - s, cy);
+  pop();
+}
+
+function drawNextIcon(cx, cy) {
+  push();
+  fill(0);
+  noStroke();
+  // ▷|
+  const s = SMALL_R * 0.7;
+  rect(cx + s - 1, cy - s, 3, s * 2);
+  triangle(cx - s, cy - s, cx - s, cy + s, cx + s, cy);
+  pop();
+}
+
+function drawShuffleIcon(cx, cy, active) {
+  push();
+  stroke(active ? SPOTIFY_GREEN : 0);
+  strokeWeight(2.5);
+  noFill();
+  const s = 8;
+  // 交差する2本の矢印線
+  line(cx - s, cy - s, cx + s, cy + s);
+  line(cx - s, cy + s, cx + s, cy - s);
+  // 矢印先端（右上）
+  line(cx + s, cy - s, cx + s - 4, cy - s);
+  line(cx + s, cy - s, cx + s, cy - s + 4);
+  // 矢印先端（右下）
+  line(cx + s, cy + s, cx + s - 4, cy + s);
+  line(cx + s, cy + s, cx + s, cy + s - 4);
+
+  // ON のとき下にドット
+  if (active) {
+    noStroke();
+    fill(SPOTIFY_GREEN);
+    ellipse(cx, cy + s + 8, 5, 5);
+  }
+  pop();
+}
+
+function drawRepeatIcon(cx, cy, mode) {
+  const active = mode !== 'off';
+  push();
+  stroke(active ? SPOTIFY_GREEN : 0);
+  strokeWeight(2.5);
+  noFill();
+  const s = 9;
+  // 丸い矢印（簡易的な四角ループ）
+  beginShape();
+  vertex(cx - s, cy - s);
+  vertex(cx + s, cy - s);
+  vertex(cx + s, cy + s);
+  vertex(cx - s, cy + s);
+  endShape(CLOSE);
+  // 右上に矢印
+  line(cx + s, cy - s, cx + s - 4, cy - s - 4);
+  line(cx + s, cy - s, cx + s + 4, cy - s - 4);
+  // 左下に矢印
+  line(cx - s, cy + s, cx - s - 4, cy + s + 4);
+  line(cx - s, cy + s, cx - s + 4, cy + s + 4);
+
+  // track repeat のとき "1" を表示
+  if (mode === 'track') {
+    noStroke();
+    fill(SPOTIFY_GREEN);
+    textSize(11);
+    textAlign(CENTER, CENTER);
+    text('1', cx, cy);
+  }
+
+  // active のとき下にドット
+  if (active) {
+    noStroke();
+    fill(SPOTIFY_GREEN);
+    ellipse(cx, cy + s + 10, 5, 5);
+  }
+  pop();
+}
+
+// ---------------------------------------------------------------
 // 音量バー（左下・デバッグ用）
 // ---------------------------------------------------------------
 function drawVolumeBar(scaledVol) {
@@ -279,11 +422,11 @@ function drawVolumeBar(scaledVol) {
 // ---------------------------------------------------------------
 function drawLoginButton() {
   const bw = 220, bh = 52;
-  const bx = W / 2, by = H / 2 + 250; // 動画の下あたり
+  const bx = W / 2, by = CTRL_Y;
 
   push();
   rectMode(CENTER);
-  fill(30, 215, 96); // Spotify グリーン
+  fill(30, 215, 96);
   noStroke();
   rect(bx, by, bw, bh, 26);
 
@@ -299,10 +442,31 @@ function drawLoginButton() {
 // ---------------------------------------------------------------
 function mousePressed() {
   if (!Spotify.isLoggedIn()) {
-    const bx = W / 2, by = H / 2 + 250;
-    if (abs(mouseX - bx) < 110 && abs(mouseY - by) < 26) {
+    // ログインボタン
+    if (abs(mouseX - CTRL_CX) < 110 && abs(mouseY - CTRL_Y) < 26) {
       Spotify.login();
     }
+    return;
+  }
+
+  // 再生コントロールのクリック判定
+  const hitR = 22; // クリック判定半径
+
+  if (dist(mouseX, mouseY, CTRL_CX, CTRL_Y) < PLAY_R + 4) {
+    // 再生 / 一時停止
+    Spotify.togglePlay();
+  } else if (dist(mouseX, mouseY, CTRL_CX - BTN_GAP, CTRL_Y) < hitR) {
+    // 前の曲
+    Spotify.skipPrev();
+  } else if (dist(mouseX, mouseY, CTRL_CX + BTN_GAP, CTRL_Y) < hitR) {
+    // 次の曲
+    Spotify.skipNext();
+  } else if (dist(mouseX, mouseY, CTRL_CX - BTN_GAP * 2, CTRL_Y) < hitR) {
+    // シャッフル
+    Spotify.toggleShuffle();
+  } else if (dist(mouseX, mouseY, CTRL_CX + BTN_GAP * 2, CTRL_Y) < hitR) {
+    // リピート
+    Spotify.cycleRepeat();
   }
 }
 
