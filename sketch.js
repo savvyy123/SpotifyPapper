@@ -66,6 +66,8 @@ let artColor = [0, 0, 0]; // ジャケットから抽出した線の色
 
 let trackChars = [];
 let lastTrack  = '';
+let p5Font;              // loadFont で読み込んだフォント
+let waveT = 0;           // 波アニメーション用の時間
 
 
 // BPM グリッチ状態
@@ -85,6 +87,10 @@ let scanFadeAlpha = 255;   // フェードアウト用アルファ
 // ---------------------------------------------------------------
 // p5.js ライフサイクル
 // ---------------------------------------------------------------
+function preload() {
+  p5Font = loadFont('assets/fonts/BIZUDPGothic-Bold.ttf');
+}
+
 function setup() {
   updateSizes();
   createCanvas(W, H);
@@ -467,18 +473,61 @@ function generateTrackChars(track) {
       size:  sz,
     });
   }
+
+  waveT = 0;
 }
 
+// 波線の設定
+const WAVE_NUM_LINES = 6;    // 波線の本数
+const WAVE_FREQ = 3;         // 波の周波数
+const WAVE_HEIGHT = 10;      // 波の振幅
+const WAVE_RES = 30;         // 波の解像度
+
 function drawTrackChars() {
+  if (!p5Font) return;
+
+  waveT += 0.02;
+  const bpm = Spotify.getBPM() || 120;
+  const bpmWave = WAVE_HEIGHT * (bpm / 120);
+
   for (const c of trackChars) {
+    // 原点(0,0)で文字のアウトライン点群を取得
+    const pts = p5Font.textToPoints(c.ch, 0, 0, c.size, { sampleFactor: 0.22 });
+    if (pts.length === 0) continue;
+
+    // 文字の中心を求めてオフセット
+    const bounds = p5Font.textBounds(c.ch, 0, 0, c.size);
+    const cx = bounds.x + bounds.w / 2;
+    const cy = bounds.y + bounds.h / 2;
+
     push();
     translate(c.x, c.y);
     rotate(c.angle);
+
+    // 波線エフェクト
+    noFill();
+    strokeWeight(1 * s);
+    for (let n = 0; n < WAVE_NUM_LINES; n++) {
+      stroke(artColor[0], artColor[1], artColor[2], 60 + n * 20);
+      beginShape();
+      for (let j = 0; j < pts.length; j++) {
+        const p = pts[j];
+        const wave = sin((j / WAVE_RES) * PI * WAVE_FREQ + waveT + n * 0.5) * bpmWave;
+        const px = (p.x - cx) + cos(n * 0.3) * wave;
+        const py = (p.y - cy) + sin(n * 0.3) * wave;
+        curveVertex(px, py);
+      }
+      endShape();
+    }
+
+    // 元の文字も薄く描画
+    fill(0, 40);
+    noStroke();
     textSize(c.size);
     textAlign(CENTER, CENTER);
-    fill(0);
-    noStroke();
+    textFont(p5Font);
     text(c.ch, 0, 0);
+
     pop();
   }
 }
