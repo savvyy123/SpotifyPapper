@@ -11,7 +11,7 @@
 const LINE_WIDTH     = 7;
 const LINE_SPEED     = 0.5;
 const NOISE_STRENGTH = 200.0;
-const FONT_FAMILY    = 'Noto Sans JP';
+const FONT_FAMILY    = 'BIZ UDPGothic';
 const LYRICS_FONT    = 'KazukiReiwa';
 
 // BPM グリッチ設定
@@ -67,7 +67,6 @@ let artColor = [0, 0, 0]; // ジャケットから抽出した線の色
 let trackChars = [];
 let lastTrack  = '';
 
-let typedText = '';
 
 // BPM グリッチ状態
 let lastBeatTime = 0;
@@ -193,9 +192,6 @@ function draw() {
 
   // 8. アーティスト名
   drawArtistName();
-
-  // 9. 入力テキスト
-  drawTypedText();
 
   // 8. ログインボタン
   if (!Spotify.isLoggedIn()) {
@@ -600,21 +596,6 @@ function drawLyrics() {
 }
 
 // ---------------------------------------------------------------
-// 入力テキスト（中央・白）
-// ---------------------------------------------------------------
-function drawTypedText() {
-  if (!typedText) return;
-
-  push();
-  textSize(FONT_LARGE);
-  textAlign(CENTER, CENTER);
-  fill(255);
-  noStroke();
-  text(typedText, W / 2, H / 2);
-  pop();
-}
-
-// ---------------------------------------------------------------
 // Spotify ログインボタン
 // ---------------------------------------------------------------
 function drawLoginButton() {
@@ -638,6 +619,9 @@ function drawLoginButton() {
 // インタラクション
 // ---------------------------------------------------------------
 function mousePressed() {
+  // クリック後にキャンバスのフォーカスを外してテキスト入力を無効化
+  if (document.activeElement) document.activeElement.blur();
+
   if (!Spotify.isLoggedIn()) {
     const bx = W / 2, by = H / 2 + artSize / 2 + 50;
     if (abs(mouseX - bx) < 110 && abs(mouseY - by) < 26) {
@@ -647,20 +631,12 @@ function mousePressed() {
 }
 
 function keyPressed() {
-  if (keyCode === ESCAPE) {
+  if (key === 'f' || key === 'F') {
     if (document.fullscreenElement) {
       document.exitFullscreen();
     } else {
       document.documentElement.requestFullscreen().catch(() => {});
     }
-    return false;
-  } else if (keyCode === BACKSPACE) {
-    typedText = typedText.slice(0, -1);
-    return false;
-  } else if (keyCode === ENTER || keyCode === RETURN) {
-    typedText = '';
-    return false;
-  } else if (key.length === 1) {
-    typedText += key;
   }
+  return false; // 全キー入力のデフォルト動作を抑制
 }
