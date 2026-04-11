@@ -631,8 +631,8 @@ function drawTrackChars() {
   noFill();
   strokeWeight(1.5 * s);
 
-  // 線が多いほどうねりが大きくなる（テンションが緩む）
-  const waveLoose = max(0, numLines - 2) * 3 * s;
+  // 線が多いほどうねりが大きくなる（最低でも揺れる）
+  const waveLoose = (2 + max(0, numLines - 2) * 4) * s;
 
   for (let n = 0; n < numLines; n++) {
     // n 番目の線の基本オフセット
@@ -645,22 +645,23 @@ function drawTrackChars() {
       const c2 = nextSeg.color;
 
       const pts = seg.points;
-      for (let j = 0; j < pts.length - 1; j++) {
-        const t = j / max(pts.length - 1, 1);
-        const r = lerp(c1[0], c2[0], t);
-        const g = lerp(c1[1], c2[1], t);
-        const b = lerp(c1[2], c2[2], t);
-        stroke(r, g, b, 140 + n * 15);
 
-        // Sin波のうねり: 線が増えるほど振幅が大きくなる
-        const wave1 = sin((j / 20) * PI + waveT + n * 0.8) * waveLoose;
-        const wave2 = sin((j / 12) * PI * 0.7 + waveT * 0.6 + n) * waveLoose * 0.4;
+      // curveVertex で滑らかな曲線として描画
+      const mr = lerp(c1[0], c2[0], 0.5);
+      const mg = lerp(c1[1], c2[1], 0.5);
+      const mb = lerp(c1[2], c2[2], 0.5);
+      stroke(mr, mg, mb, 140 + n * 15);
+
+      beginShape();
+      for (let j = 0; j < pts.length; j++) {
+        const wave1 = sin((j / 15) * PI + waveT + n * 0.8) * waveLoose;
+        const wave2 = sin((j / 9) * PI * 0.7 + waveT * 0.6 + n) * waveLoose * 0.5;
         const wx = wave1 + wave2;
-        const wy = cos((j / 18) * PI + waveT + n * 0.6) * waveLoose * 0.7;
+        const wy = cos((j / 12) * PI + waveT + n * 0.6) * waveLoose * 0.8;
 
-        line(pts[j].x + baseOff + wx, pts[j].y + baseOff + wy,
-             pts[j + 1].x + baseOff + wx, pts[j + 1].y + baseOff + wy);
+        curveVertex(pts[j].x + baseOff + wx, pts[j].y + baseOff + wy);
       }
+      endShape();
 
       // 次の文字への接続線
       if (charSegments.length > 1 && pts.length > 0 && nextSeg.points.length > 0) {
