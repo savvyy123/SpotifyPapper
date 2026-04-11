@@ -637,6 +637,8 @@ function keyPressed() {
     } else {
       document.documentElement.requestFullscreen().catch(() => {});
     }
+  } else if (key === 'r' || key === 'R') {
+    window.location.reload();
   }
-  return false; // 全キー入力のデフォルト動作を抑制
+  return false;
 }
