@@ -638,7 +638,8 @@ function keyPressed() {
       document.documentElement.requestFullscreen().catch(() => {});
     }
   } else if (key === 'r' || key === 'R') {
-    window.location.reload();
+    const track = Spotify.getTrackName();
+    if (track) generateTrackChars(track);
   }
   return false;
 }
