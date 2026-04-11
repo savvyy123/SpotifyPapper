@@ -494,14 +494,45 @@ function generateTrackChars(track) {
   waveT = 0;
 }
 
-// 線の設定
-const WAVE_NUM_LINES = 2;    // 線の本数
+// ---------------------------------------------------------------
+// 文字エフェクトパターン
+// ---------------------------------------------------------------
+// パターン: 0=静止(輪郭のみ) 1=穏やかな波 2=激しい波 3=拡散 4=回転
+const FONT_FX_PATTERNS = 5;
+let fontFxPattern = 0;
+let fontFxIntensity = 0;     // 0〜1 でスムージング
+let fontFxTargetIntensity = 0;
+let fontFxLastBeat = 0;
+
+function updateFontFx() {
+  const bpm = Spotify.getBPM();
+  if (bpm <= 0) return;
+  const now = millis();
+  const beatInterval = 60000 / bpm;
+
+  // 4拍ごとにパターンをランダム切り替え
+  if (now - fontFxLastBeat >= beatInterval * 4) {
+    fontFxLastBeat = now;
+    fontFxPattern = floor(random(FONT_FX_PATTERNS));
+    fontFxTargetIntensity = random(0.3, 1.0);
+  }
+
+  // BPMの拍に合わせてインテンシティをパルスさせる
+  const beatPhase = ((now % beatInterval) / beatInterval); // 0〜1
+  const pulse = pow(1 - beatPhase, 3); // 拍の頭で強く減衰
+  fontFxIntensity = lerp(fontFxIntensity, fontFxTargetIntensity * (0.5 + pulse * 0.5), 0.1);
+}
 
 function drawTrackChars() {
   if (!p5Font || trackChars.length === 0) return;
 
+  waveT += 0.02;
+  updateFontFx();
+
+  const intensity = fontFxIntensity;
+
   // 各文字ごとに点群とカラーを記録
-  const charSegments = []; // { points: [], color: [r,g,b] }
+  const charSegments = [];
   for (let ci = 0; ci < trackChars.length; ci++) {
     const c = trackChars[ci];
     const pts = p5Font.textToPoints(c.ch, 0, 0, c.size, { sampleFactor: 0.22 });
@@ -512,14 +543,49 @@ function drawTrackChars() {
     const cy = bounds.y + bounds.h / 2;
 
     const worldPts = [];
-    for (const p of pts) {
-      let lx = p.x - cx;
-      let ly = p.y - cy;
+    for (let j = 0; j < pts.length; j++) {
+      let lx = pts[j].x - cx;
+      let ly = pts[j].y - cy;
+
+      // パターンごとのエフェクト適用
+      let ox = 0, oy = 0;
+      if (fontFxPattern === 1) {
+        // 穏やかな波: ゆっくりうねる
+        const wave = sin((j / 25) * PI * 2 + waveT) * 6 * intensity;
+        ox = cos(ci * 0.5) * wave;
+        oy = sin(ci * 0.5) * wave;
+      } else if (fontFxPattern === 2) {
+        // 激しい波: 高周波で複数の波が重なる
+        const w1 = sin((j / 15) * PI * 4 + waveT * 2) * 10 * intensity;
+        const w2 = sin((j / 10) * PI * 6 + waveT * 3) * 5 * intensity;
+        ox = cos(ci * 0.3) * (w1 + w2);
+        oy = sin(ci * 0.3) * (w1 + w2);
+      } else if (fontFxPattern === 3) {
+        // 拡散: 中心から外側に膨らむ
+        const dist = sqrt(lx * lx + ly * ly);
+        const expand = sin(waveT * 1.5 + dist * 0.05) * 8 * intensity;
+        const angle = atan2(ly, lx);
+        ox = cos(angle) * expand;
+        oy = sin(angle) * expand;
+      } else if (fontFxPattern === 4) {
+        // 回転: 点が中心周りに微かに回る
+        const rotAmt = sin(waveT) * 0.15 * intensity;
+        const cosR = cos(rotAmt);
+        const sinR = sin(rotAmt);
+        const rlx = lx * cosR - ly * sinR;
+        const rly = lx * sinR + ly * cosR;
+        ox = rlx - lx;
+        oy = rly - ly;
+      }
+      // パターン0: ox=0, oy=0（静止）
+
       const cosA = cos(c.angle);
       const sinA = sin(c.angle);
+      const flx = lx + ox;
+      const fly = ly + oy;
       worldPts.push({
-        x: c.x + lx * cosA - ly * sinA,
-        y: c.y + lx * sinA + ly * cosA,
+        x: c.x + flx * cosA - fly * sinA,
+        y: c.y + flx * sinA + fly * cosA,
       });
     }
 
@@ -532,44 +598,52 @@ function drawTrackChars() {
 
   if (charSegments.length === 0) return;
 
+  // 波の本数: パターンに応じて変える
+  const numLines = fontFxPattern === 0 ? 2
+    : fontFxPattern === 2 ? floor(3 + intensity * 4)
+    : floor(2 + intensity * 3);
+
   push();
   noFill();
   strokeWeight(1.5 * s);
 
-  for (let n = 0; n < WAVE_NUM_LINES; n++) {
-    // 文字間をグラデーションで繋ぐため、短い線分ごとに色を補間
+  for (let n = 0; n < numLines; n++) {
     for (let si = 0; si < charSegments.length; si++) {
       const seg = charSegments[si];
       const nextSeg = charSegments[(si + 1) % charSegments.length];
       const c1 = seg.color;
       const c2 = nextSeg.color;
 
-      // この文字の点群を描画（色をグラデーション）
       const pts = seg.points;
       for (let j = 0; j < pts.length - 1; j++) {
         const t = j / max(pts.length - 1, 1);
         const r = lerp(c1[0], c2[0], t);
         const g = lerp(c1[1], c2[1], t);
         const b = lerp(c1[2], c2[2], t);
-        stroke(r, g, b, 160 + n * 40);
-        line(pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y);
+        stroke(r, g, b, 140 + n * 20);
+
+        // 複数本は少しオフセットして描画
+        const lineOff = (n - (numLines - 1) / 2) * 1.5 * s;
+        line(pts[j].x + lineOff, pts[j].y + lineOff,
+             pts[j + 1].x + lineOff, pts[j + 1].y + lineOff);
       }
 
-      // 次の文字への接続線（グラデーション）
+      // 次の文字への接続線
       if (charSegments.length > 1 && pts.length > 0 && nextSeg.points.length > 0) {
         const from = pts[pts.length - 1];
         const to = nextSeg.points[0];
         const steps = 20;
+        const lineOff = (n - (numLines - 1) / 2) * 1.5 * s;
         for (let j = 0; j < steps; j++) {
           const t = j / steps;
           const r = lerp(c1[0], c2[0], t);
           const g = lerp(c1[1], c2[1], t);
           const b = lerp(c1[2], c2[2], t);
-          stroke(r, g, b, (160 + n * 40) * (1 - t * 0.5));
-          const x1 = lerp(from.x, to.x, t);
-          const y1 = lerp(from.y, to.y, t);
-          const x2 = lerp(from.x, to.x, (j + 1) / steps);
-          const y2 = lerp(from.y, to.y, (j + 1) / steps);
+          stroke(r, g, b, (140 + n * 20) * (1 - t * 0.5));
+          const x1 = lerp(from.x, to.x, t) + lineOff;
+          const y1 = lerp(from.y, to.y, t) + lineOff;
+          const x2 = lerp(from.x, to.x, (j + 1) / steps) + lineOff;
+          const y2 = lerp(from.y, to.y, (j + 1) / steps) + lineOff;
           line(x1, y1, x2, y2);
         }
       }
