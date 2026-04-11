@@ -187,11 +187,11 @@ function draw() {
   // 6. 曲名
   drawTrackChars();
 
-  // 7. アーティスト名（中央）
-  const lyricsStartY = drawArtistName();
+  // 7. 歌詞（ジャケット内にクリッピング）
+  drawLyrics();
 
-  // 8. 歌詞（アーティスト名の下）
-  drawLyrics(lyricsStartY);
+  // 8. アーティスト名（ジャケット下）
+  drawArtistName();
 
   // 8. ログインボタン
   if (!Spotify.isLoggedIn()) {
@@ -718,27 +718,38 @@ const LYRICS_FADE_MS = 400;   // 現在行フェードインの時間 (ms)
 let lyricsPrevIdx = -1;       // 前フレームの現在行インデックス
 let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
 
-function drawLyrics(topY) {
+function drawLyrics() {
   if (!Lyrics.hasLyrics()) return;
 
   const lines = Lyrics.getLines();
   const progressMs = Spotify.getProgressMs();
   const currentIdx = Lyrics.getCurrentIndex(progressMs);
 
-  // 行が切り替わったらタイムスタンプを記録
   if (currentIdx !== lyricsPrevIdx) {
     lyricsTransAt = millis();
     lyricsPrevIdx = currentIdx;
   }
 
-  const margin = 30;
-  const startY = topY || (H + artSize) / 2 + 60;
-  const availH = H - startY - margin;
+  // ジャケット領域
+  const artLeft = (W - artSize) / 2;
+  const artTop = (H - artSize) / 2;
   const lineCount = lines.length;
 
-  // 全行が収まるように行間を計算し、フォントサイズも調整
+  // ジャケット内に収まるように行間・サイズを計算
+  const artPadding = artSize * 0.08;
+  const availH = artSize - artPadding * 2;
   const leading = min(48, availH / max(lineCount, 1));
   const sz = min(34, leading * 0.7);
+
+  const totalH = lineCount * leading;
+  const startY = (H - totalH) / 2;
+
+  // ジャケット矩形でクリッピング
+  const ctx = drawingContext;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(artLeft, artTop, artSize, artSize);
+  ctx.clip();
 
   push();
   textAlign(CENTER, TOP);
@@ -746,9 +757,10 @@ function drawLyrics(topY) {
   noStroke();
   loadPixels();
 
+  const maxLyricsW = artSize * 0.85;
+
   for (let i = 0; i < lineCount; i++) {
     const y = startY + i * leading;
-    if (y > H - margin) break;
 
     // 背景の明るさをピクセル配列から直接取得
     const sampleY = constrain(floor(y + sz / 2), 0, H - 1);
@@ -766,11 +778,9 @@ function drawLyrics(topY) {
 
     if (i === currentIdx) {
       const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
-      const easedT = t * t * (3 - 2 * t);  // smoothstep
+      const easedT = t * t * (3 - 2 * t);
       let curSz = sz * 1.6;
       textSize(curSz);
-      // アートの幅より少し内側に収める
-      const maxLyricsW = artSize * 0.85;
       if (textWidth(lines[i].text) > maxLyricsW) {
         curSz *= maxLyricsW / textWidth(lines[i].text);
         textSize(curSz);
@@ -779,7 +789,6 @@ function drawLyrics(topY) {
     } else {
       let lineSz = sz;
       textSize(lineSz);
-      const maxLyricsW = artSize * 0.85;
       if (textWidth(lines[i].text) > maxLyricsW) {
         lineSz *= maxLyricsW / textWidth(lines[i].text);
         textSize(lineSz);
@@ -791,6 +800,7 @@ function drawLyrics(topY) {
   }
 
   pop();
+  ctx.restore(); // クリッピング解除
 }
 
 // ---------------------------------------------------------------
