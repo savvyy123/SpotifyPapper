@@ -631,8 +631,8 @@ function drawTrackChars() {
   noFill();
   strokeWeight(1.5 * s);
 
-  // 線が多いほどうねりが大きくなる（最低でも揺れる）
-  const waveLoose = (2 + max(0, numLines - 2) * 4) * s;
+  // 線が増えたときだけうねりが出る
+  const waveLoose = max(0, numLines - 2) * 5 * s;
 
   for (let n = 0; n < numLines; n++) {
     // n 番目の線の基本オフセット
