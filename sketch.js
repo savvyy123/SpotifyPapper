@@ -724,27 +724,26 @@ function drawLyrics() {
   const lines = Lyrics.getLines();
   const progressMs = Spotify.getProgressMs();
   const currentIdx = Lyrics.getCurrentIndex(progressMs);
+  if (currentIdx < 0) return;
 
   if (currentIdx !== lyricsPrevIdx) {
     lyricsTransAt = millis();
     lyricsPrevIdx = currentIdx;
   }
 
-  // ジャケット領域
-  const artLeft = (W - artSize) / 2;
-  const artTop = (H - artSize) / 2;
-  const lineCount = lines.length;
+  const currentText = lines[currentIdx].text;
+  const maxLyricsW = artSize * 0.85;
 
-  // ジャケット内に収まるように行間・サイズを計算
-  const artPadding = artSize * 0.08;
-  const availH = artSize - artPadding * 2;
-  const leading = min(48, availH / max(lineCount, 1));
-  const sz = min(34, leading * 0.7);
+  // フェードイン
+  const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
+  const easedT = t * t * (3 - 2 * t);
 
-  const totalH = lineCount * leading;
-  const startY = (H - totalH) / 2;
+  // ジャケット中央に大きく表示
+  let sz = 48 * s;
 
   // ジャケット矩形でクリッピング
+  const artLeft = (W - artSize) / 2;
+  const artTop = (H - artSize) / 2;
   const ctx = drawingContext;
   ctx.save();
   ctx.beginPath();
@@ -752,55 +751,34 @@ function drawLyrics() {
   ctx.clip();
 
   push();
-  textAlign(CENTER, TOP);
+  textAlign(CENTER, CENTER);
   textFont(LYRICS_FONT);
-  noStroke();
-  loadPixels();
-
-  const maxLyricsW = artSize * 0.85;
-
-  for (let i = 0; i < lineCount; i++) {
-    const y = startY + i * leading;
-
-    // 背景の明るさをピクセル配列から直接取得
-    const sampleY = constrain(floor(y + sz / 2), 0, H - 1);
-    let brightnessSum = 0;
-    const xCols = 7;
-    const halfArt = artSize / 2;
-    const d = pixelDensity();
-    for (let j = 0; j < xCols; j++) {
-      const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
-      const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
-      brightnessSum += (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
-    }
-    const avgBrightness = brightnessSum / xCols;
-    const textColor = avgBrightness < 128 ? 255 : 0;
-
-    if (i === currentIdx) {
-      const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
-      const easedT = t * t * (3 - 2 * t);
-      let curSz = sz * 1.6;
-      textSize(curSz);
-      if (textWidth(lines[i].text) > maxLyricsW) {
-        curSz *= maxLyricsW / textWidth(lines[i].text);
-        textSize(curSz);
-      }
-      fill(textColor, lerp(LYRICS_ALPHA, 255, easedT));
-    } else {
-      let lineSz = sz;
-      textSize(lineSz);
-      if (textWidth(lines[i].text) > maxLyricsW) {
-        lineSz *= maxLyricsW / textWidth(lines[i].text);
-        textSize(lineSz);
-      }
-      fill(textColor, LYRICS_ALPHA);
-    }
-
-    text(lines[i].text, W / 2, y);
+  textSize(sz);
+  if (textWidth(currentText) > maxLyricsW) {
+    sz *= maxLyricsW / textWidth(currentText);
+    textSize(sz);
   }
+  noStroke();
 
+  // 背景の明るさをサンプリング
+  loadPixels();
+  const sampleY = constrain(floor(H / 2), 0, H - 1);
+  let brightnessSum = 0;
+  const xCols = 7;
+  const halfArt = artSize / 2;
+  const d = pixelDensity();
+  for (let j = 0; j < xCols; j++) {
+    const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
+    const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
+    brightnessSum += (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
+  }
+  const textColor = (brightnessSum / xCols) < 128 ? 255 : 0;
+
+  fill(textColor, lerp(0, 255, easedT));
+  text(currentText, W / 2, H / 2);
   pop();
-  ctx.restore(); // クリッピング解除
+
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------
