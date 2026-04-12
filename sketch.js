@@ -780,23 +780,41 @@ function layoutLyricsSquares(left, top, size, text) {
   }
   if (row.length > 0) rows.push(row);
 
-  // 垂直中央配置
+  // 行の高さと総高さ
   const rowHeights = rows.map(r => Math.max(...r.map(wi => wordBlocks[wi].height)));
   const totalH = rowHeights.reduce((a, b) => a + b, 0) + lineGap * (rows.length - 1);
-  let y = top + (size - totalH) / 2;
+
+  // 各行の幅（単語幅の合計 + 単語間スペース）
+  const rowWidths = rows.map(r =>
+    r.reduce((s, wi) => s + wordBlocks[wi].width, 0) + wordGap * (r.length - 1)
+  );
+  const maxRowW = Math.max(...rowWidths);
+  const maxAllowedH = size * 0.92;
+
+  // 幅 or 高さがジャケットを超えていたら全体を縮小
+  const scaleW = maxRowW > maxWidth ? maxWidth / maxRowW : 1;
+  const scaleH = totalH > maxAllowedH ? maxAllowedH / totalH : 1;
+  const scale = Math.min(scaleW, scaleH);
+
+  const scaledRowHeights = rowHeights.map(h => h * scale);
+  const scaledLineGap = lineGap * scale;
+  const scaledWordGap = wordGap * scale;
+  const scaledTotalH = scaledRowHeights.reduce((a, b) => a + b, 0) + scaledLineGap * (rows.length - 1);
+  let y = top + (size - scaledTotalH) / 2;
 
   const glyphs = [];
   for (let ri = 0; ri < rows.length; ri++) {
     const r = rows[ri];
-    const rowH = rowHeights[ri];
-    const rowTotalW = r.reduce((s, wi) => s + wordBlocks[wi].width, 0) + wordGap * (r.length - 1);
+    const rowH = scaledRowHeights[ri];
+    const rowTotalW = r.reduce((s, wi) => s + wordBlocks[wi].width * scale, 0)
+                      + scaledWordGap * (r.length - 1);
     let x = left + (size - rowTotalW) / 2;
     const centerY = y + rowH / 2;
 
     for (let k = 0; k < r.length; k++) {
       const wb = wordBlocks[r[k]];
       for (let i = 0; i < wb.chars.length; i++) {
-        const sz = wb.sizes[i];
+        const sz = wb.sizes[i] * scale;
         const maxJitter = (rowH - sz) * 0.5 + sz * 0.15;
         const jitter = (Math.random() * 2 - 1) * maxJitter;
         glyphs.push({
@@ -807,9 +825,9 @@ function layoutLyricsSquares(left, top, size, text) {
         });
         x += sz;
       }
-      if (k < r.length - 1) x += wordGap;
+      if (k < r.length - 1) x += scaledWordGap;
     }
-    y += rowH + lineGap;
+    y += rowH + scaledLineGap;
   }
   return glyphs;
 }
