@@ -720,23 +720,51 @@ let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
 let lyricsCircles = [];       // 現在行の円パッキング配置結果
 let lyricsCirclesFor = -1;    // 円配置が生成された行インデックス
 
-// 円パッキング: ジャケット矩形内にランダムサイズの円を敷き詰める
-function packCirclesInRect(left, top, size, count, minR, maxR) {
+// 円パッキング: 指定半径の円を読み順（左上→右下）に敷き詰める
+// 重なり条件: 中心間距離 >= max(rA, rB) （小さい円の中心が大きい円の弧上〜内側に）
+// 読み順保持のため、各円の配置位置は既存円より右 or 下に来ることを優先する
+function packCirclesReadingOrder(left, top, size, radii) {
   const circles = [];
-  const maxAttempts = count * 80;
-  let attempts = 0;
-  while (circles.length < count && attempts < maxAttempts) {
-    attempts++;
-    const r = minR + Math.random() * (maxR - minR);
-    const x = left + r + Math.random() * (size - 2 * r);
-    const y = top + r + Math.random() * (size - 2 * r);
-    let ok = true;
-    for (const c of circles) {
-      const dx = c.x - x, dy = c.y - y;
-      const minD = c.r + r;
-      if (dx * dx + dy * dy < minD * minD * 0.98) { ok = false; break; }
+  const maxAttempts = 600;
+  for (let i = 0; i < radii.length; i++) {
+    const r = radii[i];
+    const prev = circles[circles.length - 1];
+    let best = null;
+    let bestScore = -Infinity;
+    for (let a = 0; a < maxAttempts; a++) {
+      const x = left + r + Math.random() * (size - 2 * r);
+      const y = top + r + Math.random() * (size - 2 * r);
+      let collide = false;
+      for (const c of circles) {
+        const dx = c.x - x, dy = c.y - y;
+        const minD = Math.max(c.r, r);
+        if (dx * dx + dy * dy < minD * minD) { collide = true; break; }
+      }
+      if (collide) continue;
+      // スコア: 前の円より右/下にあるほど高い（読み順を保つ）
+      let score = 0;
+      if (prev) {
+        const dx = x - prev.x;
+        const dy = y - prev.y;
+        // 右方向優先、次に下方向、左/上へは強いペナルティ
+        score = dx * 1.0 + Math.max(0, dy) * 0.5 - Math.max(0, -dy) * 0.3;
+        // 前の円との距離が近いほど良い（連続感）
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        score -= dist * 0.2;
+      } else {
+        // 最初の円は左上寄りを優先
+        score = -(x - left) - (y - top);
+      }
+      if (score > bestScore) { bestScore = score; best = { x, y, r }; }
     }
-    if (ok) circles.push({ x, y, r });
+    if (best) {
+      circles.push(best);
+    } else {
+      // 見つからなければランダム配置（衝突あり）
+      const x = left + r + Math.random() * (size - 2 * r);
+      const y = top + r + Math.random() * (size - 2 * r);
+      circles.push({ x, y, r });
+    }
   }
   return circles;
 }
@@ -796,12 +824,31 @@ function drawLyrics() {
   ctx.clip();
 
   // 行が切り替わったら円パッキングを再生成
-  const chars = Array.from(currentText).filter(c => c !== ' ');
+  // スペースは「単語境界」として使い、描画時は除外
+  const rawChars = Array.from(currentText);
+  const chars = [];
+  const isWordHead = [];
+  let nextIsHead = true;
+  for (const ch of rawChars) {
+    if (ch === ' ') { nextIsHead = true; continue; }
+    chars.push(ch);
+    isWordHead.push(nextIsHead);
+    nextIsHead = false;
+  }
+
   if (currentIdx !== lyricsCirclesFor || lyricsCircles.length < chars.length) {
-    const minR = artSize * 0.035;
-    const maxR = artSize * 0.09;
-    const raw = packCirclesInRect(artLeft, artTop, artSize, chars.length, minR, maxR);
-    lyricsCircles = orderCirclesForReading(raw);
+    // 文字数に応じて基準サイズをスケール（多いと小さく）
+    const densityScale = constrain(12 / Math.max(chars.length, 1), 0.55, 1.4);
+    const minR = artSize * 0.04  * densityScale;
+    const maxR = artSize * 0.075 * densityScale;
+    const headR = artSize * 0.14 * densityScale; // 単語先頭用の大きめ上限
+    const radii = chars.map((_, i) => {
+      if (isWordHead[i]) {
+        return headR * (0.85 + Math.random() * 0.15);
+      }
+      return minR + Math.random() * (maxR - minR);
+    });
+    lyricsCircles = packCirclesReadingOrder(artLeft, artTop, artSize, radii);
     lyricsCirclesFor = currentIdx;
   }
 
