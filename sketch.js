@@ -720,65 +720,92 @@ let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
 let lyricsGlyphs = [];        // 現在行の文字配置 {ch, x, y, size}
 let lyricsGlyphsFor = -1;     // 配置が生成された行インデックス
 
-// 横書き行レイアウト: 各文字を正方形として隣接配置し、Y方向にジッターを加える
-// 単語先頭は大きめ、行がジャケット幅を超えたら折り返し
-function layoutLyricsSquares(left, top, size, chars, isWordHead) {
+// 横書き行レイアウト: 単語単位でブロックを組み、単語内は密、単語間はスペースを挟む
+// 折り返しは単語単位、各文字はY方向にジッター
+function layoutLyricsSquares(left, top, size, text) {
   const maxWidth = size * 0.92;
-  const densityScale = constrain(14 / Math.max(chars.length, 1), 0.6, 1.5);
+
+  // 単語に分割（スペース区切り、日本語の場合スペースがないので全体が1ワード扱い）
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 0) return [];
+
+  const totalChars = words.reduce((s, w) => s + Array.from(w).length, 0);
+  const densityScale = constrain(14 / Math.max(totalChars, 1), 0.6, 1.5);
   const baseSize = size * 0.075 * densityScale;
   const smallMin = baseSize * 0.8;
   const smallMax = baseSize * 1.1;
   const headMin  = baseSize * 1.35;
   const headMax  = baseSize * 1.7;
+  const wordGap  = baseSize * 0.55; // 単語間のスペース幅
+  const lineGap  = baseSize * 0.25; // 行間
 
-  // 文字ごとのサイズを決定
-  const sizes = chars.map((_, i) => {
-    if (isWordHead[i]) return headMin + Math.random() * (headMax - headMin);
-    return smallMin + Math.random() * (smallMax - smallMin);
+  // 各単語のグリフ情報を事前に作成（単語内詰め配置）
+  const wordBlocks = words.map(w => {
+    const chars = Array.from(w);
+    const sizes = chars.map((_, i) => {
+      if (i === 0) return headMin + Math.random() * (headMax - headMin);
+      return smallMin + Math.random() * (smallMax - smallMin);
+    });
+    const width = sizes.reduce((s, v) => s + v, 0);
+    const height = Math.max(...sizes);
+    return { chars, sizes, width, height };
   });
 
-  // 折り返しで行分け（各文字のサイズの合計が maxWidth を超えたら改行）
+  // 単語単位で折り返し
   const rows = [];
   let row = [];
   let rowW = 0;
-  for (let i = 0; i < chars.length; i++) {
-    if (rowW + sizes[i] > maxWidth && row.length > 0) {
+  for (let wi = 0; wi < wordBlocks.length; wi++) {
+    const wb = wordBlocks[wi];
+    const addW = (row.length === 0) ? wb.width : wb.width + wordGap;
+    // 単語自体が maxWidth を超える場合は単独行で配置（強制）
+    if (wb.width > maxWidth && row.length > 0) {
       rows.push(row);
-      row = [];
-      rowW = 0;
+      row = [wi];
+      rowW = wb.width;
+      continue;
     }
-    row.push(i);
-    rowW += sizes[i];
+    if (rowW + addW > maxWidth && row.length > 0) {
+      rows.push(row);
+      row = [wi];
+      rowW = wb.width;
+    } else {
+      row.push(wi);
+      rowW += addW;
+    }
   }
   if (row.length > 0) rows.push(row);
 
-  // 行の総高さから垂直中央配置
-  const rowHeights = rows.map(r => Math.max(...r.map(i => sizes[i])));
-  const gap = baseSize * 0.25;
-  const totalH = rowHeights.reduce((a, b) => a + b, 0) + gap * (rows.length - 1);
+  // 垂直中央配置
+  const rowHeights = rows.map(r => Math.max(...r.map(wi => wordBlocks[wi].height)));
+  const totalH = rowHeights.reduce((a, b) => a + b, 0) + lineGap * (rows.length - 1);
   let y = top + (size - totalH) / 2;
 
   const glyphs = [];
   for (let ri = 0; ri < rows.length; ri++) {
     const r = rows[ri];
     const rowH = rowHeights[ri];
-    const rowW2 = r.reduce((s, i) => s + sizes[i], 0);
-    let x = left + (size - rowW2) / 2;
+    const rowTotalW = r.reduce((s, wi) => s + wordBlocks[wi].width, 0) + wordGap * (r.length - 1);
+    let x = left + (size - rowTotalW) / 2;
     const centerY = y + rowH / 2;
-    for (const i of r) {
-      const sz = sizes[i];
-      // 上下ジッター（行高に収まる範囲で）
-      const maxJitter = (rowH - sz) * 0.5 + sz * 0.15;
-      const jitter = (Math.random() * 2 - 1) * maxJitter;
-      glyphs.push({
-        ch: chars[i],
-        x: x + sz / 2,
-        y: centerY + jitter,
-        size: sz,
-      });
-      x += sz;
+
+    for (let k = 0; k < r.length; k++) {
+      const wb = wordBlocks[r[k]];
+      for (let i = 0; i < wb.chars.length; i++) {
+        const sz = wb.sizes[i];
+        const maxJitter = (rowH - sz) * 0.5 + sz * 0.15;
+        const jitter = (Math.random() * 2 - 1) * maxJitter;
+        glyphs.push({
+          ch: wb.chars[i],
+          x: x + sz / 2,
+          y: centerY + jitter,
+          size: sz,
+        });
+        x += sz;
+      }
+      if (k < r.length - 1) x += wordGap;
     }
-    y += rowH + gap;
+    y += rowH + lineGap;
   }
   return glyphs;
 }
@@ -811,23 +838,11 @@ function drawLyrics() {
   ctx.rect(artLeft, artTop, artSize, artSize);
   ctx.clip();
 
-  // スペースは単語境界としてのみ使い、描画対象から除外
-  const rawChars = Array.from(currentText);
-  const chars = [];
-  const isWordHead = [];
-  let nextIsHead = true;
-  for (const ch of rawChars) {
-    if (ch === ' ') { nextIsHead = true; continue; }
-    chars.push(ch);
-    isWordHead.push(nextIsHead);
-    nextIsHead = false;
-  }
-
   // 行が切り替わったらレイアウトを再生成
-  if (currentIdx !== lyricsGlyphsFor || lyricsGlyphs.length < chars.length) {
+  if (currentIdx !== lyricsGlyphsFor) {
     push();
     textFont(LYRICS_FONT);
-    lyricsGlyphs = layoutLyricsSquares(artLeft, artTop, artSize, chars, isWordHead);
+    lyricsGlyphs = layoutLyricsSquares(artLeft, artTop, artSize, currentText);
     pop();
     lyricsGlyphsFor = currentIdx;
   }
