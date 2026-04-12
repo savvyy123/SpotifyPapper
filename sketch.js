@@ -631,7 +631,7 @@ function drawTrackChars() {
 
   push();
   noFill();
-  strokeWeight(1.5 * s);
+  strokeWeight(2.8 * s);
 
   // 線が増えたときだけうねりが出る
   const waveLoose = max(0, numLines - 2) * 5 * s;
@@ -652,7 +652,7 @@ function drawTrackChars() {
       const mr = lerp(c1[0], c2[0], 0.5);
       const mg = lerp(c1[1], c2[1], 0.5);
       const mb = lerp(c1[2], c2[2], 0.5);
-      stroke(mr, mg, mb, 140 + n * 15);
+      stroke(mr, mg, mb, 220 + n * 10);
 
       beginShape();
       for (let j = 0; j < pts.length; j++) {
@@ -675,7 +675,7 @@ function drawTrackChars() {
           const r = lerp(c1[0], c2[0], t);
           const g = lerp(c1[1], c2[1], t);
           const b = lerp(c1[2], c2[2], t);
-          stroke(r, g, b, (140 + n * 15) * (1 - t * 0.5));
+          stroke(r, g, b, (220 + n * 10) * (1 - t * 0.5));
           const connWave = sin((j / 5) * PI + waveT + n * 0.8) * waveLoose;
           const x1 = lerp(from.x, to.x, t) + baseOff + connWave;
           const y1 = lerp(from.y, to.y, t) + baseOff;
