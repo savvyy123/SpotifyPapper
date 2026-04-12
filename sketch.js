@@ -161,9 +161,6 @@ function draw() {
     background(255);
   }
 
-  // 1. 曲名の線（ジャケットより後ろ）
-  drawTrackChars();
-
   // 2. アルバムアート（中央）
   drawArtNormal();
 
@@ -193,6 +190,9 @@ function draw() {
       glitchRGBShift(vx, vy);
     }
   }
+
+  // 6. 曲名
+  drawTrackChars();
 
   // 7. 歌詞（ジャケット内にクリッピング）
   drawLyrics();
