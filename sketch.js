@@ -740,7 +740,7 @@ function layoutLyricsSquares(left, top, size, text) {
   const smallMax = baseSize * 1.1;
   const headMin  = baseSize * 1.35;
   const headMax  = baseSize * 1.7;
-  const wordGap  = baseSize * (isEnglish ? 0.2 : 0.55); // 単語間のスペース幅
+  const wordGap  = baseSize * (isEnglish ? 0.1 : 0.55); // 単語間のスペース幅
   const lineGap  = baseSize * (isEnglish ? 0.75 : 0.25); // 英語は行間を広く
 
   // 各単語のグリフ情報を事前に作成（単語内詰め配置）
