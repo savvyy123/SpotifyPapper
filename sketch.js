@@ -573,37 +573,8 @@ function drawTrackChars() {
       let lx = pts[j].x - cx;
       let ly = pts[j].y - cy;
 
-      // パターンごとのエフェクト適用
-      let ox = 0, oy = 0;
-      if (fontFxPattern === 1) {
-        // 穏やかな波: ゆっくりうねる
-        const wave = sin((j / 25) * PI * 2 + waveT) * 6 * intensity;
-        ox = cos(ci * 0.5) * wave;
-        oy = sin(ci * 0.5) * wave;
-      } else if (fontFxPattern === 2) {
-        // 激しい波: 高周波で複数の波が重なる
-        const w1 = sin((j / 15) * PI * 4 + waveT * 2) * 10 * intensity;
-        const w2 = sin((j / 10) * PI * 6 + waveT * 3) * 5 * intensity;
-        ox = cos(ci * 0.3) * (w1 + w2);
-        oy = sin(ci * 0.3) * (w1 + w2);
-      } else if (fontFxPattern === 3) {
-        // 拡散: 中心から外側に膨らむ
-        const dist = sqrt(lx * lx + ly * ly);
-        const expand = sin(waveT * 1.5 + dist * 0.05) * 8 * intensity;
-        const angle = atan2(ly, lx);
-        ox = cos(angle) * expand;
-        oy = sin(angle) * expand;
-      } else if (fontFxPattern === 4) {
-        // 回転: 点が中心周りに微かに回る
-        const rotAmt = sin(waveT) * 0.15 * intensity;
-        const cosR = cos(rotAmt);
-        const sinR = sin(rotAmt);
-        const rlx = lx * cosR - ly * sinR;
-        const rly = lx * sinR + ly * cosR;
-        ox = rlx - lx;
-        oy = rly - ly;
-      }
-      // パターン0: ox=0, oy=0（静止）
+      // 文字自体のゆらぎは撤去。線の増加による波は後段で適用する。
+      const ox = 0, oy = 0;
 
       const cosA = cos(c.angle);
       const sinA = sin(c.angle);
@@ -624,22 +595,22 @@ function drawTrackChars() {
 
   if (charSegments.length === 0) return;
 
-  // 波の本数: パターンに応じて変える
-  const numLines = fontFxPattern === 0 ? 2
-    : fontFxPattern === 2 ? floor(3 + intensity * 4)
-    : floor(2 + intensity * 3);
+  // 波の本数: パターン＋強度に応じて増える（最大を大きく）
+  // パターン0は 1 本で固定（揺れなし）
+  const numLines = fontFxPattern === 0
+    ? 1
+    : floor(2 + intensity * 18); // 2〜20本
+
+  // FontsMotion 方式の波パラメータ
+  // 本数が多いほど高さを出す。1本のみ（パターン0）なら高さ0。
+  const waveHeight = numLines <= 1 ? 0 : (2 + intensity * 14) * s;
+  const waveNum = fontFxPattern === 2 ? 6 : fontFxPattern === 3 ? 4 : 3;
 
   push();
   noFill();
   strokeWeight(2.8 * s);
 
-  // 線が増えたときだけうねりが出る
-  const waveLoose = max(0, numLines - 2) * 5 * s;
-
   for (let n = 0; n < numLines; n++) {
-    // n 番目の線の基本オフセット
-    const baseOff = (n - (numLines - 1) / 2) * 2 * s;
-
     for (let si = 0; si < charSegments.length; si++) {
       const seg = charSegments[si];
       const nextSeg = charSegments[(si + 1) % charSegments.length];
@@ -648,39 +619,41 @@ function drawTrackChars() {
 
       const pts = seg.points;
 
-      // curveVertex で滑らかな曲線として描画
       const mr = lerp(c1[0], c2[0], 0.5);
       const mg = lerp(c1[1], c2[1], 0.5);
       const mb = lerp(c1[2], c2[2], 0.5);
-      stroke(mr, mg, mb, 220 + n * 10);
+      // 線が増えたら1本あたりの不透明度を落として重なりを活かす
+      const alphaBase = numLines <= 1 ? 235 : constrain(235 - numLines * 6, 90, 235);
+      stroke(mr, mg, mb, alphaBase);
 
       beginShape();
       for (let j = 0; j < pts.length; j++) {
-        const wave1 = sin((j / 15) * PI + waveT + n * 0.8) * waveLoose;
-        const wave2 = sin((j / 9) * PI * 0.7 + waveT * 0.6 + n) * waveLoose * 0.5;
-        const wx = wave1 + wave2;
-        const wy = cos((j / 12) * PI + waveT + n * 0.6) * waveLoose * 0.8;
-
-        curveVertex(pts[j].x + baseOff + wx, pts[j].y + baseOff + wy);
+        // FontsMotion: 点インデックスに沿った進行波。線ごとに位相をずらす
+        const wave = sin((j / 40) * PI * waveNum + waveT) * waveHeight;
+        const wx = cos(n * 0.1) * wave;
+        const wy = sin(n * 0.1) * wave;
+        curveVertex(pts[j].x + wx, pts[j].y + wy);
       }
       endShape();
 
-      // 次の文字への接続線
+      // 次の文字への接続線（波は同じ進行で）
       if (charSegments.length > 1 && pts.length > 0 && nextSeg.points.length > 0) {
         const from = pts[pts.length - 1];
         const to = nextSeg.points[0];
         const steps = 20;
         for (let j = 0; j < steps; j++) {
-          const t = j / steps;
-          const r = lerp(c1[0], c2[0], t);
-          const g = lerp(c1[1], c2[1], t);
-          const b = lerp(c1[2], c2[2], t);
-          stroke(r, g, b, (220 + n * 10) * (1 - t * 0.5));
-          const connWave = sin((j / 5) * PI + waveT + n * 0.8) * waveLoose;
-          const x1 = lerp(from.x, to.x, t) + baseOff + connWave;
-          const y1 = lerp(from.y, to.y, t) + baseOff;
-          const x2 = lerp(from.x, to.x, (j + 1) / steps) + baseOff + connWave;
-          const y2 = lerp(from.y, to.y, (j + 1) / steps) + baseOff;
+          const tt = j / steps;
+          const r = lerp(c1[0], c2[0], tt);
+          const g = lerp(c1[1], c2[1], tt);
+          const b = lerp(c1[2], c2[2], tt);
+          stroke(r, g, b, alphaBase * (1 - tt * 0.4));
+          const wave = sin((j / 40) * PI * waveNum + waveT) * waveHeight;
+          const wx = cos(n * 0.1) * wave;
+          const wy = sin(n * 0.1) * wave;
+          const x1 = lerp(from.x, to.x, tt) + wx;
+          const y1 = lerp(from.y, to.y, tt) + wy;
+          const x2 = lerp(from.x, to.x, (j + 1) / steps) + wx;
+          const y2 = lerp(from.y, to.y, (j + 1) / steps) + wy;
           line(x1, y1, x2, y2);
         }
       }
