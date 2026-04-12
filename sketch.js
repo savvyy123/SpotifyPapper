@@ -626,7 +626,7 @@ function drawTrackChars() {
       const mr = lerp(c1[0], c2[0], 0.5);
       const mg = lerp(c1[1], c2[1], 0.5);
       const mb = lerp(c1[2], c2[2], 0.5);
-      const alphaBase = numLines <= 1 ? 235 : constrain(235 - numLines * 6, 90, 235);
+      const alphaBase = numLines <= 1 ? 255 : constrain(255 - numLines * 3, 180, 255);
       stroke(mr, mg, mb, alphaBase);
 
       beginShape();
