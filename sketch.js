@@ -730,14 +730,18 @@ function layoutLyricsSquares(left, top, size, text) {
   if (words.length === 0) return [];
 
   const totalChars = words.reduce((s, w) => s + Array.from(w).length, 0);
+  // 英語判定: 半角英字のみで構成される（スペース区切りの単語が2つ以上 or ASCIIのみ）
+  const isEnglish = /^[\x20-\x7E]+$/.test(text) && words.length >= 1 &&
+                    /[A-Za-z]/.test(text);
   const densityScale = constrain(14 / Math.max(totalChars, 1), 0.6, 1.5);
-  const baseSize = size * 0.075 * densityScale;
+  const langScale = isEnglish ? 1.7 : 1.0;
+  const baseSize = size * 0.075 * densityScale * langScale;
   const smallMin = baseSize * 0.8;
   const smallMax = baseSize * 1.1;
   const headMin  = baseSize * 1.35;
   const headMax  = baseSize * 1.7;
   const wordGap  = baseSize * 0.55; // 単語間のスペース幅
-  const lineGap  = baseSize * 0.25; // 行間
+  const lineGap  = baseSize * (isEnglish ? 0.75 : 0.25); // 英語は行間を広く
 
   // 各単語のグリフ情報を事前に作成（単語内詰め配置）
   const wordBlocks = words.map(w => {
