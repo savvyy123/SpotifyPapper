@@ -536,11 +536,18 @@ function updateFontFx() {
   const now = millis();
   const beatInterval = 60000 / bpm;
 
-  // 4拍ごとにパターンをランダム切り替え
+  // 4拍ごとにパターンをランダム切り替え。
+  // 80% の確率でノーマル（パターン0=静止）、20% で派手エフェクト
   if (now - fontFxLastBeat >= beatInterval * 4) {
     fontFxLastBeat = now;
-    fontFxPattern = floor(random(FONT_FX_PATTERNS));
-    fontFxTargetIntensity = random(0.3, 1.0);
+    if (random() < 0.8) {
+      fontFxPattern = 0; // ノーマル
+      fontFxTargetIntensity = 0;
+    } else {
+      // 派手: パターン1〜4 から選び、強度も高め
+      fontFxPattern = 1 + floor(random(FONT_FX_PATTERNS - 1));
+      fontFxTargetIntensity = random(0.7, 1.0);
+    }
   }
 
   // BPMの拍に合わせてインテンシティをパルスさせる
