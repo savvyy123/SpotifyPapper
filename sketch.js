@@ -595,16 +595,13 @@ function drawTrackChars() {
 
   if (charSegments.length === 0) return;
 
-  // 波の本数: パターン＋強度に応じて増える（最大を大きく）
-  // パターン0は 1 本で固定（揺れなし）
+  // 好みの基本: num=10, wavenum=1
+  // パターン0は静止（1本）、それ以外は基本10本＋強度で上下
   const numLines = fontFxPattern === 0
     ? 1
-    : floor(2 + intensity * 18); // 2〜20本
-
-  // FontsMotion 方式の波パラメータ
-  // 本数が多いほど高さを出す。1本のみ（パターン0）なら高さ0。
-  const waveHeight = numLines <= 1 ? 0 : (2 + intensity * 14) * s;
-  const waveNum = fontFxPattern === 2 ? 6 : fontFxPattern === 3 ? 4 : 3;
+    : floor(10 + intensity * 6); // 10〜16本
+  const waveNum = 1;
+  const waveHeight = numLines <= 1 ? 0 : (45 + intensity * 30) * s;
 
   push();
   noFill();
@@ -629,7 +626,7 @@ function drawTrackChars() {
       beginShape();
       for (let j = 0; j < pts.length; j++) {
         // FontsMotion: 点インデックスに沿った進行波。線ごとに位相をずらす
-        const wave = sin((j / 40) * PI * waveNum + waveT) * waveHeight;
+        const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
         const wx = cos(n * 0.1) * wave;
         const wy = sin(n * 0.1) * wave;
         curveVertex(pts[j].x + wx, pts[j].y + wy);
@@ -647,7 +644,7 @@ function drawTrackChars() {
           const g = lerp(c1[1], c2[1], tt);
           const b = lerp(c1[2], c2[2], tt);
           stroke(r, g, b, alphaBase * (1 - tt * 0.4));
-          const wave = sin((j / 40) * PI * waveNum + waveT) * waveHeight;
+          const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
           const wx = cos(n * 0.1) * wave;
           const wy = sin(n * 0.1) * wave;
           const x1 = lerp(from.x, to.x, tt) + wx;
