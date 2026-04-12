@@ -717,82 +717,70 @@ const LYRICS_ALPHA = 30;      // 通常行の薄さ
 const LYRICS_FADE_MS = 400;   // 現在行フェードインの時間 (ms)
 let lyricsPrevIdx = -1;       // 前フレームの現在行インデックス
 let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
-let lyricsCircles = [];       // 現在行の円パッキング配置結果
-let lyricsCirclesFor = -1;    // 円配置が生成された行インデックス
+let lyricsGlyphs = [];        // 現在行の文字配置 {ch, x, y, size}
+let lyricsGlyphsFor = -1;     // 配置が生成された行インデックス
 
-// 円パッキング: 指定半径の円を読み順（左上→右下）に敷き詰める
-// 重なり条件: 中心間距離 >= max(rA, rB) （小さい円の中心が大きい円の弧上〜内側に）
-// 読み順保持のため、各円の配置位置は既存円より右 or 下に来ることを優先する
-function packCirclesReadingOrder(left, top, size, radii) {
-  const circles = [];
-  const maxAttempts = 600;
-  for (let i = 0; i < radii.length; i++) {
-    const r = radii[i];
-    const prev = circles[circles.length - 1];
-    let best = null;
-    let bestScore = -Infinity;
-    for (let a = 0; a < maxAttempts; a++) {
-      const x = left + r + Math.random() * (size - 2 * r);
-      const y = top + r + Math.random() * (size - 2 * r);
-      let collide = false;
-      for (const c of circles) {
-        const dx = c.x - x, dy = c.y - y;
-        const minD = Math.max(c.r, r);
-        if (dx * dx + dy * dy < minD * minD) { collide = true; break; }
-      }
-      if (collide) continue;
-      // スコア: 前の円より右/下にあるほど高い（読み順を保つ）
-      let score = 0;
-      if (prev) {
-        const dx = x - prev.x;
-        const dy = y - prev.y;
-        // 右方向優先、次に下方向、左/上へは強いペナルティ
-        score = dx * 1.0 + Math.max(0, dy) * 0.5 - Math.max(0, -dy) * 0.3;
-        // 前の円との距離が近いほど良い（連続感）
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        score -= dist * 0.2;
-      } else {
-        // 最初の円は左上寄りを優先
-        score = -(x - left) - (y - top);
-      }
-      if (score > bestScore) { bestScore = score; best = { x, y, r }; }
-    }
-    if (best) {
-      circles.push(best);
-    } else {
-      // 見つからなければランダム配置（衝突あり）
-      const x = left + r + Math.random() * (size - 2 * r);
-      const y = top + r + Math.random() * (size - 2 * r);
-      circles.push({ x, y, r });
-    }
-  }
-  return circles;
-}
+// 横書き行レイアウト: 各文字を正方形として隣接配置し、Y方向にジッターを加える
+// 単語先頭は大きめ、行がジャケット幅を超えたら折り返し
+function layoutLyricsSquares(left, top, size, chars, isWordHead) {
+  const maxWidth = size * 0.92;
+  const densityScale = constrain(14 / Math.max(chars.length, 1), 0.6, 1.5);
+  const baseSize = size * 0.075 * densityScale;
+  const smallMin = baseSize * 0.8;
+  const smallMax = baseSize * 1.1;
+  const headMin  = baseSize * 1.35;
+  const headMax  = baseSize * 1.7;
 
-// 円を行にグルーピング（Y座標で）して、各行内をX順に並べ、読み順の配列を返す
-function orderCirclesForReading(circles) {
-  if (circles.length === 0) return [];
-  const sorted = circles.slice().sort((a, b) => a.y - b.y);
+  // 文字ごとのサイズを決定
+  const sizes = chars.map((_, i) => {
+    if (isWordHead[i]) return headMin + Math.random() * (headMax - headMin);
+    return smallMin + Math.random() * (smallMax - smallMin);
+  });
+
+  // 折り返しで行分け（各文字のサイズの合計が maxWidth を超えたら改行）
   const rows = [];
-  let currentRow = [sorted[0]];
-  for (let i = 1; i < sorted.length; i++) {
-    const c = sorted[i];
-    const rowAvgY = currentRow.reduce((s, x) => s + x.y, 0) / currentRow.length;
-    const rowAvgR = currentRow.reduce((s, x) => s + x.r, 0) / currentRow.length;
-    if (Math.abs(c.y - rowAvgY) < rowAvgR * 0.9) {
-      currentRow.push(c);
-    } else {
-      rows.push(currentRow);
-      currentRow = [c];
+  let row = [];
+  let rowW = 0;
+  for (let i = 0; i < chars.length; i++) {
+    if (rowW + sizes[i] > maxWidth && row.length > 0) {
+      rows.push(row);
+      row = [];
+      rowW = 0;
     }
+    row.push(i);
+    rowW += sizes[i];
   }
-  rows.push(currentRow);
-  const ordered = [];
-  for (const row of rows) {
-    row.sort((a, b) => a.x - b.x);
-    for (const c of row) ordered.push(c);
+  if (row.length > 0) rows.push(row);
+
+  // 行の総高さから垂直中央配置
+  const rowHeights = rows.map(r => Math.max(...r.map(i => sizes[i])));
+  const gap = baseSize * 0.25;
+  const totalH = rowHeights.reduce((a, b) => a + b, 0) + gap * (rows.length - 1);
+  let y = top + (size - totalH) / 2;
+
+  const glyphs = [];
+  for (let ri = 0; ri < rows.length; ri++) {
+    const r = rows[ri];
+    const rowH = rowHeights[ri];
+    const rowW2 = r.reduce((s, i) => s + sizes[i], 0);
+    let x = left + (size - rowW2) / 2;
+    const centerY = y + rowH / 2;
+    for (const i of r) {
+      const sz = sizes[i];
+      // 上下ジッター（行高に収まる範囲で）
+      const maxJitter = (rowH - sz) * 0.5 + sz * 0.15;
+      const jitter = (Math.random() * 2 - 1) * maxJitter;
+      glyphs.push({
+        ch: chars[i],
+        x: x + sz / 2,
+        y: centerY + jitter,
+        size: sz,
+      });
+      x += sz;
+    }
+    y += rowH + gap;
   }
-  return ordered;
+  return glyphs;
 }
 
 function drawLyrics() {
@@ -823,8 +811,7 @@ function drawLyrics() {
   ctx.rect(artLeft, artTop, artSize, artSize);
   ctx.clip();
 
-  // 行が切り替わったら円パッキングを再生成
-  // スペースは「単語境界」として使い、描画時は除外
+  // スペースは単語境界としてのみ使い、描画対象から除外
   const rawChars = Array.from(currentText);
   const chars = [];
   const isWordHead = [];
@@ -836,20 +823,13 @@ function drawLyrics() {
     nextIsHead = false;
   }
 
-  if (currentIdx !== lyricsCirclesFor || lyricsCircles.length < chars.length) {
-    // 文字数に応じて基準サイズをスケール（多いと小さく）
-    const densityScale = constrain(12 / Math.max(chars.length, 1), 0.55, 1.4);
-    const minR = artSize * 0.04  * densityScale;
-    const maxR = artSize * 0.075 * densityScale;
-    const headR = artSize * 0.14 * densityScale; // 単語先頭用の大きめ上限
-    const radii = chars.map((_, i) => {
-      if (isWordHead[i]) {
-        return headR * (0.85 + Math.random() * 0.15);
-      }
-      return minR + Math.random() * (maxR - minR);
-    });
-    lyricsCircles = packCirclesReadingOrder(artLeft, artTop, artSize, radii);
-    lyricsCirclesFor = currentIdx;
+  // 行が切り替わったらレイアウトを再生成
+  if (currentIdx !== lyricsGlyphsFor || lyricsGlyphs.length < chars.length) {
+    push();
+    textFont(LYRICS_FONT);
+    lyricsGlyphs = layoutLyricsSquares(artLeft, artTop, artSize, chars, isWordHead);
+    pop();
+    lyricsGlyphsFor = currentIdx;
   }
 
   push();
@@ -861,19 +841,15 @@ function drawLyrics() {
   const d = pixelDensity();
   const alpha = lerp(0, 255, easedT);
 
-  const n = Math.min(chars.length, lyricsCircles.length);
-  for (let i = 0; i < n; i++) {
-    const ch = chars[i];
-    const c = lyricsCircles[i];
-    const sz = c.r * 2 * 0.9;
-    textSize(sz);
-    const sx = constrain(floor(c.x), 0, W - 1);
-    const sy = constrain(floor(c.y), 0, H - 1);
+  for (const g of lyricsGlyphs) {
+    textSize(g.size);
+    const sx = constrain(floor(g.x), 0, W - 1);
+    const sy = constrain(floor(g.y), 0, H - 1);
     const pi = 4 * ((sy * d) * (W * d) + (sx * d));
     const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
     const textColor = brightness < 160 ? 255 : 0;
     fill(textColor, alpha);
-    text(ch, c.x, c.y);
+    text(g.ch, g.x, g.y);
   }
   pop();
 
