@@ -760,22 +760,26 @@ function drawLyrics() {
   }
   noStroke();
 
-  // 背景の明るさをサンプリング
+  // 文字ごとに背景明るさをサンプリングして白/黒を決定
   loadPixels();
-  const sampleY = constrain(floor(H / 2), 0, H - 1);
-  let brightnessSum = 0;
-  const xCols = 7;
-  const halfArt = artSize / 2;
   const d = pixelDensity();
-  for (let j = 0; j < xCols; j++) {
-    const sx = constrain(floor(W / 2 - halfArt + (artSize * j / (xCols - 1))), 0, W - 1);
-    const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
-    brightnessSum += (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
-  }
-  const textColor = (brightnessSum / xCols) < 160 ? 255 : 0;
+  const sampleY = constrain(floor(H / 2), 0, H - 1);
+  const totalW = textWidth(currentText);
+  let cursorX = W / 2 - totalW / 2;
+  const alpha = lerp(0, 255, easedT);
 
-  fill(textColor, lerp(0, 255, easedT));
-  text(currentText, W / 2, H / 2);
+  for (const ch of currentText) {
+    const chW = textWidth(ch);
+    const centerX = cursorX + chW / 2;
+    const sx = constrain(floor(centerX), 0, W - 1);
+    const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
+    const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
+    const textColor = brightness < 160 ? 255 : 0;
+    fill(textColor, alpha);
+    textAlign(LEFT, CENTER);
+    text(ch, cursorX, H / 2);
+    cursorX += chW;
+  }
   pop();
 
   ctx.restore();
