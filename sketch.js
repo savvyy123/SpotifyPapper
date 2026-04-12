@@ -152,7 +152,9 @@ function draw() {
     updateBeatGlitch();
   }
 
-  if (isInverted() && artPalette.length > 0) {
+  if (blackMode) {
+    background(0);
+  } else if (isInverted() && artPalette.length > 0) {
     const c = artPalette[0];
     background(c[0], c[1], c[2]);
   } else {
@@ -535,6 +537,7 @@ let fontFxIntensity = 0;     // 0〜1 でスムージング
 let fontFxTargetIntensity = 0;
 let fontFxLastBeat = 0;
 let invertMode = false;      // 色反転モード（スペースキーでトグル）
+let blackMode = false;       // 背景黒モード（Bキーでトグル）
 
 function updateFontFx() {
   const bpm = Spotify.getBPM();
@@ -697,7 +700,7 @@ function drawArtistName() {
   textFont(LYRICS_FONT);
   textSize(FONT_MEDIUM);
   textAlign(CENTER, TOP);
-  fill(isInverted() ? 255 : 0);
+  fill((isInverted() || blackMode) ? 255 : 0);
   noStroke();
   const ty = (H + artSize) / 2 + 20;
   text(artist, W / 2, ty);
@@ -940,6 +943,8 @@ function keyPressed() {
     if (track) generateTrackChars(track);
   } else if (key === ' ') {
     invertMode = !invertMode;
+  } else if (key === 'b' || key === 'B') {
+    blackMode = !blackMode;
   }
   return false;
 }
