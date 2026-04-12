@@ -152,7 +152,7 @@ function draw() {
     updateBeatGlitch();
   }
 
-  background(255);
+  background(invertMode ? 0 : 255);
 
   // 2. アルバムアート（中央）
   drawArtNormal();
@@ -529,6 +529,7 @@ let fontFxPattern = 0;
 let fontFxIntensity = 0;     // 0〜1 でスムージング
 let fontFxTargetIntensity = 0;
 let fontFxLastBeat = 0;
+let invertMode = false;      // 色反転モード
 
 function updateFontFx() {
   const bpm = Spotify.getBPM();
@@ -548,6 +549,8 @@ function updateFontFx() {
       fontFxPattern = 1 + floor(random(FONT_FX_PATTERNS - 1));
       fontFxTargetIntensity = random(0.7, 1.0);
     }
+    // 色反転: 独立抽選で15%（持続は次の切り替えまで）
+    invertMode = random() < 0.15;
   }
 
   // BPMの拍に合わせてインテンシティをパルスさせる
@@ -623,9 +626,10 @@ function drawTrackChars() {
 
       const pts = seg.points;
 
-      const mr = lerp(c1[0], c2[0], 0.5);
-      const mg = lerp(c1[1], c2[1], 0.5);
-      const mb = lerp(c1[2], c2[2], 0.5);
+      let mr = lerp(c1[0], c2[0], 0.5);
+      let mg = lerp(c1[1], c2[1], 0.5);
+      let mb = lerp(c1[2], c2[2], 0.5);
+      if (invertMode) { mr = 255 - mr; mg = 255 - mg; mb = 255 - mb; }
       const alphaBase = numLines <= 1 ? 255 : constrain(255 - numLines * 3, 180, 255);
       stroke(mr, mg, mb, alphaBase);
 
@@ -645,9 +649,10 @@ function drawTrackChars() {
         const steps = 20;
         for (let j = 0; j < steps; j++) {
           const tt = j / steps;
-          const r = lerp(c1[0], c2[0], tt);
-          const g = lerp(c1[1], c2[1], tt);
-          const b = lerp(c1[2], c2[2], tt);
+          let r = lerp(c1[0], c2[0], tt);
+          let g = lerp(c1[1], c2[1], tt);
+          let b = lerp(c1[2], c2[2], tt);
+          if (invertMode) { r = 255 - r; g = 255 - g; b = 255 - b; }
           stroke(r, g, b, alphaBase * (1 - tt * 0.4));
           const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
           const wx = cos(n * 0.1) * wave;
@@ -676,7 +681,7 @@ function drawArtistName() {
   textFont(LYRICS_FONT);
   textSize(FONT_MEDIUM);
   textAlign(CENTER, TOP);
-  fill(0);
+  fill(invertMode ? 255 : 0);
   noStroke();
   const ty = (H + artSize) / 2 + 20;
   text(artist, W / 2, ty);
