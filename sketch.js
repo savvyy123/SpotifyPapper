@@ -717,6 +717,55 @@ const LYRICS_ALPHA = 30;      // 通常行の薄さ
 const LYRICS_FADE_MS = 400;   // 現在行フェードインの時間 (ms)
 let lyricsPrevIdx = -1;       // 前フレームの現在行インデックス
 let lyricsTransAt = 0;        // 行が切り替わった時刻 (ms)
+let lyricsCircles = [];       // 現在行の円パッキング配置結果
+let lyricsCirclesFor = -1;    // 円配置が生成された行インデックス
+
+// 円パッキング: ジャケット矩形内にランダムサイズの円を敷き詰める
+function packCirclesInRect(left, top, size, count, minR, maxR) {
+  const circles = [];
+  const maxAttempts = count * 80;
+  let attempts = 0;
+  while (circles.length < count && attempts < maxAttempts) {
+    attempts++;
+    const r = minR + Math.random() * (maxR - minR);
+    const x = left + r + Math.random() * (size - 2 * r);
+    const y = top + r + Math.random() * (size - 2 * r);
+    let ok = true;
+    for (const c of circles) {
+      const dx = c.x - x, dy = c.y - y;
+      const minD = c.r + r;
+      if (dx * dx + dy * dy < minD * minD * 0.98) { ok = false; break; }
+    }
+    if (ok) circles.push({ x, y, r });
+  }
+  return circles;
+}
+
+// 円を行にグルーピング（Y座標で）して、各行内をX順に並べ、読み順の配列を返す
+function orderCirclesForReading(circles) {
+  if (circles.length === 0) return [];
+  const sorted = circles.slice().sort((a, b) => a.y - b.y);
+  const rows = [];
+  let currentRow = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const c = sorted[i];
+    const rowAvgY = currentRow.reduce((s, x) => s + x.y, 0) / currentRow.length;
+    const rowAvgR = currentRow.reduce((s, x) => s + x.r, 0) / currentRow.length;
+    if (Math.abs(c.y - rowAvgY) < rowAvgR * 0.9) {
+      currentRow.push(c);
+    } else {
+      rows.push(currentRow);
+      currentRow = [c];
+    }
+  }
+  rows.push(currentRow);
+  const ordered = [];
+  for (const row of rows) {
+    row.sort((a, b) => a.x - b.x);
+    for (const c of row) ordered.push(c);
+  }
+  return ordered;
+}
 
 function drawLyrics() {
   if (!Lyrics.hasLyrics()) return;
@@ -732,14 +781,10 @@ function drawLyrics() {
   }
 
   const currentText = lines[currentIdx].text;
-  const maxLyricsW = artSize * 0.85;
 
   // フェードイン
   const t = constrain((millis() - lyricsTransAt) / LYRICS_FADE_MS, 0, 1);
   const easedT = t * t * (3 - 2 * t);
-
-  // ジャケット中央に大きく表示
-  let sz = 72 * s;
 
   // ジャケット矩形でクリッピング
   const artLeft = (W - artSize) / 2;
@@ -750,61 +795,38 @@ function drawLyrics() {
   ctx.rect(artLeft, artTop, artSize, artSize);
   ctx.clip();
 
-  push();
-  textFont(LYRICS_FONT);
-  textSize(sz);
-  noStroke();
-
-  // 1行に収まらなければ2行に分割（中央付近で単語・文字境界を探す）
-  const lineTexts = [];
-  if (textWidth(currentText) <= maxLyricsW) {
-    lineTexts.push(currentText);
-  } else {
-    const mid = Math.floor(currentText.length / 2);
-    let splitIdx = -1;
-    for (let offset = 0; offset <= currentText.length; offset++) {
-      const l = mid - offset, r = mid + offset;
-      if (l > 0 && currentText[l] === ' ') { splitIdx = l; break; }
-      if (r < currentText.length && currentText[r] === ' ') { splitIdx = r; break; }
-    }
-    if (splitIdx < 0) splitIdx = mid;
-    const line1 = currentText.slice(0, splitIdx).trim();
-    const line2 = currentText.slice(splitIdx).trim();
-    lineTexts.push(line1, line2);
-    const widest = Math.max(textWidth(line1), textWidth(line2));
-    if (widest > maxLyricsW) {
-      sz *= maxLyricsW / widest;
-      textSize(sz);
-    }
+  // 行が切り替わったら円パッキングを再生成
+  const chars = Array.from(currentText).filter(c => c !== ' ');
+  if (currentIdx !== lyricsCirclesFor || lyricsCircles.length < chars.length) {
+    const minR = artSize * 0.035;
+    const maxR = artSize * 0.09;
+    const raw = packCirclesInRect(artLeft, artTop, artSize, chars.length, minR, maxR);
+    lyricsCircles = orderCirclesForReading(raw);
+    lyricsCirclesFor = currentIdx;
   }
 
-  // 文字ごとに背景明るさをサンプリングして白/黒を決定
+  push();
+  textFont(LYRICS_FONT);
+  textAlign(CENTER, CENTER);
+  noStroke();
+
   loadPixels();
   const d = pixelDensity();
   const alpha = lerp(0, 255, easedT);
-  const lineH = sz * 1.15;
-  const totalH = lineH * lineTexts.length;
-  const startY = H / 2 - totalH / 2 + lineH / 2;
 
-  textAlign(LEFT, CENTER);
-  for (let li = 0; li < lineTexts.length; li++) {
-    const lineText = lineTexts[li];
-    const lineY = startY + li * lineH;
-    const sampleY = constrain(floor(lineY), 0, H - 1);
-    const totalW = textWidth(lineText);
-    let cursorX = W / 2 - totalW / 2;
-
-    for (const ch of lineText) {
-      const chW = textWidth(ch);
-      const centerX = cursorX + chW / 2;
-      const sx = constrain(floor(centerX), 0, W - 1);
-      const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
-      const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
-      const textColor = brightness < 160 ? 255 : 0;
-      fill(textColor, alpha);
-      text(ch, cursorX, lineY);
-      cursorX += chW;
-    }
+  const n = Math.min(chars.length, lyricsCircles.length);
+  for (let i = 0; i < n; i++) {
+    const ch = chars[i];
+    const c = lyricsCircles[i];
+    const sz = c.r * 2 * 0.9;
+    textSize(sz);
+    const sx = constrain(floor(c.x), 0, W - 1);
+    const sy = constrain(floor(c.y), 0, H - 1);
+    const pi = 4 * ((sy * d) * (W * d) + (sx * d));
+    const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
+    const textColor = brightness < 160 ? 255 : 0;
+    fill(textColor, alpha);
+    text(ch, c.x, c.y);
   }
   pop();
 
