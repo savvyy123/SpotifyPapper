@@ -152,7 +152,12 @@ function draw() {
     updateBeatGlitch();
   }
 
-  background(isInverted() ? 0 : 255);
+  if (isInverted() && artPalette.length > 0) {
+    const c = artPalette[0];
+    background(c[0], c[1], c[2]);
+  } else {
+    background(255);
+  }
 
   // 2. アルバムアート（中央）
   drawArtNormal();
@@ -530,9 +535,10 @@ let fontFxIntensity = 0;     // 0〜1 でスムージング
 let fontFxTargetIntensity = 0;
 let fontFxLastBeat = 0;
 let invertMode = false;      // 色反転モード（4拍持続）
-let flashUntil = 0;          // フラッシュ終了時刻
+let flashUntil = 0;          // フラッシュ終了時刻（この時刻まで高速点滅）
 let lastFlashBeat = -1;      // 最後にフラッシュ抽選した拍
-const FLASH_DURATION_MS = 120;
+const FLASH_DURATION_MS = 600;  // フラッシュ持続（この間に複数回反転）
+const FLASH_INTERVAL_MS = 60;   // 高速反転の間隔（約16Hz）
 
 function updateFontFx() {
   const bpm = Spotify.getBPM();
@@ -551,7 +557,7 @@ function updateFontFx() {
       fontFxPattern = 1 + floor(random(FONT_FX_PATTERNS - 1));
       fontFxTargetIntensity = random(0.7, 1.0);
     }
-    invertMode = random() < 0.15;
+    invertMode = random() < 0.05;
   }
 
   // ビートごとにフラッシュ抽選（5%）
@@ -569,9 +575,14 @@ function updateFontFx() {
   fontFxIntensity = lerp(fontFxIntensity, fontFxTargetIntensity * (0.5 + pulse * 0.5), 0.1);
 }
 
-// 反転状態の最終判定: 持続反転 XOR 一時フラッシュ
+// 反転状態の最終判定: 持続反転 XOR フラッシュ（フラッシュ中は高速に反転を繰り返す）
 function isInverted() {
-  const flashing = millis() < flashUntil;
+  const now = millis();
+  let flashing = false;
+  if (now < flashUntil) {
+    // フラッシュ中: FLASH_INTERVAL_MS ごとにトグル
+    flashing = Math.floor(now / FLASH_INTERVAL_MS) % 2 === 0;
+  }
   return invertMode !== flashing;
 }
 
@@ -642,10 +653,15 @@ function drawTrackChars() {
 
       const pts = seg.points;
 
-      let mr = lerp(c1[0], c2[0], 0.5);
-      let mg = lerp(c1[1], c2[1], 0.5);
-      let mb = lerp(c1[2], c2[2], 0.5);
-      if (isInverted()) { mr = 255 - mr; mg = 255 - mg; mb = 255 - mb; }
+      let mr, mg, mb;
+      if (isInverted()) {
+        // 反転時: 線色は白（背景がアート色になるため）
+        mr = 255; mg = 255; mb = 255;
+      } else {
+        mr = lerp(c1[0], c2[0], 0.5);
+        mg = lerp(c1[1], c2[1], 0.5);
+        mb = lerp(c1[2], c2[2], 0.5);
+      }
       const alphaBase = numLines <= 1 ? 255 : constrain(255 - numLines * 3, 180, 255);
       stroke(mr, mg, mb, alphaBase);
 
@@ -665,10 +681,14 @@ function drawTrackChars() {
         const steps = 20;
         for (let j = 0; j < steps; j++) {
           const tt = j / steps;
-          let r = lerp(c1[0], c2[0], tt);
-          let g = lerp(c1[1], c2[1], tt);
-          let b = lerp(c1[2], c2[2], tt);
-          if (isInverted()) { r = 255 - r; g = 255 - g; b = 255 - b; }
+          let r, g, b;
+          if (isInverted()) {
+            r = 255; g = 255; b = 255;
+          } else {
+            r = lerp(c1[0], c2[0], tt);
+            g = lerp(c1[1], c2[1], tt);
+            b = lerp(c1[2], c2[2], tt);
+          }
           stroke(r, g, b, alphaBase * (1 - tt * 0.4));
           const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
           const wx = cos(n * 0.1) * wave;
