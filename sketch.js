@@ -739,7 +739,7 @@ function drawLyrics() {
   const easedT = t * t * (3 - 2 * t);
 
   // ジャケット中央に大きく表示
-  let sz = 48 * s;
+  let sz = 72 * s;
 
   // ジャケット矩形でクリッピング
   const artLeft = (W - artSize) / 2;
@@ -751,34 +751,60 @@ function drawLyrics() {
   ctx.clip();
 
   push();
-  textAlign(CENTER, CENTER);
   textFont(LYRICS_FONT);
   textSize(sz);
-  if (textWidth(currentText) > maxLyricsW) {
-    sz *= maxLyricsW / textWidth(currentText);
-    textSize(sz);
-  }
   noStroke();
+
+  // 1行に収まらなければ2行に分割（中央付近で単語・文字境界を探す）
+  const lineTexts = [];
+  if (textWidth(currentText) <= maxLyricsW) {
+    lineTexts.push(currentText);
+  } else {
+    const mid = Math.floor(currentText.length / 2);
+    let splitIdx = -1;
+    for (let offset = 0; offset <= currentText.length; offset++) {
+      const l = mid - offset, r = mid + offset;
+      if (l > 0 && currentText[l] === ' ') { splitIdx = l; break; }
+      if (r < currentText.length && currentText[r] === ' ') { splitIdx = r; break; }
+    }
+    if (splitIdx < 0) splitIdx = mid;
+    const line1 = currentText.slice(0, splitIdx).trim();
+    const line2 = currentText.slice(splitIdx).trim();
+    lineTexts.push(line1, line2);
+    const widest = Math.max(textWidth(line1), textWidth(line2));
+    if (widest > maxLyricsW) {
+      sz *= maxLyricsW / widest;
+      textSize(sz);
+    }
+  }
 
   // 文字ごとに背景明るさをサンプリングして白/黒を決定
   loadPixels();
   const d = pixelDensity();
-  const sampleY = constrain(floor(H / 2), 0, H - 1);
-  const totalW = textWidth(currentText);
-  let cursorX = W / 2 - totalW / 2;
   const alpha = lerp(0, 255, easedT);
+  const lineH = sz * 1.15;
+  const totalH = lineH * lineTexts.length;
+  const startY = H / 2 - totalH / 2 + lineH / 2;
 
-  for (const ch of currentText) {
-    const chW = textWidth(ch);
-    const centerX = cursorX + chW / 2;
-    const sx = constrain(floor(centerX), 0, W - 1);
-    const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
-    const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
-    const textColor = brightness < 160 ? 255 : 0;
-    fill(textColor, alpha);
-    textAlign(LEFT, CENTER);
-    text(ch, cursorX, H / 2);
-    cursorX += chW;
+  textAlign(LEFT, CENTER);
+  for (let li = 0; li < lineTexts.length; li++) {
+    const lineText = lineTexts[li];
+    const lineY = startY + li * lineH;
+    const sampleY = constrain(floor(lineY), 0, H - 1);
+    const totalW = textWidth(lineText);
+    let cursorX = W / 2 - totalW / 2;
+
+    for (const ch of lineText) {
+      const chW = textWidth(ch);
+      const centerX = cursorX + chW / 2;
+      const sx = constrain(floor(centerX), 0, W - 1);
+      const pi = 4 * ((sampleY * d) * (W * d) + (sx * d));
+      const brightness = (pixels[pi] + pixels[pi + 1] + pixels[pi + 2]) / 3;
+      const textColor = brightness < 160 ? 255 : 0;
+      fill(textColor, alpha);
+      text(ch, cursorX, lineY);
+      cursorX += chW;
+    }
   }
   pop();
 
