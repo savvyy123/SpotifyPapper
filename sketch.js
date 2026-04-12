@@ -152,7 +152,7 @@ function draw() {
     updateBeatGlitch();
   }
 
-  background(invertMode ? 0 : 255);
+  background(isInverted() ? 0 : 255);
 
   // 2. アルバムアート（中央）
   drawArtNormal();
@@ -529,7 +529,10 @@ let fontFxPattern = 0;
 let fontFxIntensity = 0;     // 0〜1 でスムージング
 let fontFxTargetIntensity = 0;
 let fontFxLastBeat = 0;
-let invertMode = false;      // 色反転モード
+let invertMode = false;      // 色反転モード（4拍持続）
+let flashUntil = 0;          // フラッシュ終了時刻
+let lastFlashBeat = -1;      // 最後にフラッシュ抽選した拍
+const FLASH_DURATION_MS = 120;
 
 function updateFontFx() {
   const bpm = Spotify.getBPM();
@@ -545,18 +548,31 @@ function updateFontFx() {
       fontFxPattern = 0; // ノーマル
       fontFxTargetIntensity = 0;
     } else {
-      // 派手: パターン1〜4 から選び、強度も高め
       fontFxPattern = 1 + floor(random(FONT_FX_PATTERNS - 1));
       fontFxTargetIntensity = random(0.7, 1.0);
     }
-    // 色反転: 独立抽選で15%（持続は次の切り替えまで）
     invertMode = random() < 0.15;
+  }
+
+  // ビートごとにフラッシュ抽選（5%）
+  const beatIndex = floor(now / beatInterval);
+  if (beatIndex !== lastFlashBeat) {
+    lastFlashBeat = beatIndex;
+    if (random() < 0.05) {
+      flashUntil = now + FLASH_DURATION_MS;
+    }
   }
 
   // BPMの拍に合わせてインテンシティをパルスさせる
   const beatPhase = ((now % beatInterval) / beatInterval); // 0〜1
-  const pulse = pow(1 - beatPhase, 3); // 拍の頭で強く減衰
+  const pulse = pow(1 - beatPhase, 3);
   fontFxIntensity = lerp(fontFxIntensity, fontFxTargetIntensity * (0.5 + pulse * 0.5), 0.1);
+}
+
+// 反転状態の最終判定: 持続反転 XOR 一時フラッシュ
+function isInverted() {
+  const flashing = millis() < flashUntil;
+  return invertMode !== flashing;
 }
 
 function drawTrackChars() {
@@ -629,7 +645,7 @@ function drawTrackChars() {
       let mr = lerp(c1[0], c2[0], 0.5);
       let mg = lerp(c1[1], c2[1], 0.5);
       let mb = lerp(c1[2], c2[2], 0.5);
-      if (invertMode) { mr = 255 - mr; mg = 255 - mg; mb = 255 - mb; }
+      if (isInverted()) { mr = 255 - mr; mg = 255 - mg; mb = 255 - mb; }
       const alphaBase = numLines <= 1 ? 255 : constrain(255 - numLines * 3, 180, 255);
       stroke(mr, mg, mb, alphaBase);
 
@@ -652,7 +668,7 @@ function drawTrackChars() {
           let r = lerp(c1[0], c2[0], tt);
           let g = lerp(c1[1], c2[1], tt);
           let b = lerp(c1[2], c2[2], tt);
-          if (invertMode) { r = 255 - r; g = 255 - g; b = 255 - b; }
+          if (isInverted()) { r = 255 - r; g = 255 - g; b = 255 - b; }
           stroke(r, g, b, alphaBase * (1 - tt * 0.4));
           const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
           const wx = cos(n * 0.1) * wave;
@@ -681,7 +697,7 @@ function drawArtistName() {
   textFont(LYRICS_FONT);
   textSize(FONT_MEDIUM);
   textAlign(CENTER, TOP);
-  fill(invertMode ? 255 : 0);
+  fill(isInverted() ? 255 : 0);
   noStroke();
   const ty = (H + artSize) / 2 + 20;
   text(artist, W / 2, ty);
