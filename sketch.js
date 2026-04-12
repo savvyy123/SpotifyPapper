@@ -602,66 +602,58 @@ function drawTrackChars() {
 
   if (charSegments.length === 0) return;
 
+  // 全文字の点を連結。文字間は補間点でつなぎ、1本の波として連続させる
+  const allPts = [];
+  const connectSteps = 12;
+  for (let si = 0; si < charSegments.length; si++) {
+    const seg = charSegments[si];
+    for (const p of seg.points) allPts.push(p);
+    const nextSeg = charSegments[si + 1];
+    if (nextSeg && seg.points.length > 0 && nextSeg.points.length > 0) {
+      const from = seg.points[seg.points.length - 1];
+      const to = nextSeg.points[0];
+      for (let k = 1; k < connectSteps; k++) {
+        const tt = k / connectSteps;
+        allPts.push({ x: lerp(from.x, to.x, tt), y: lerp(from.y, to.y, tt) });
+      }
+    }
+  }
+  if (allPts.length === 0) return;
+
   // 好みの基本: num=10, wavenum=1
-  // パターン0は静止（1本）、それ以外は基本10本＋強度で上下
   const numLines = fontFxPattern === 0
     ? 1
     : floor(10 + intensity * 6); // 10〜16本
   const waveNum = 1;
   const waveHeight = numLines <= 1 ? 0 : (45 + intensity * 30) * s;
 
+  // 色: 先頭と末尾の文字色を両端に、途中はなめらかに遷移
+  const col0 = charSegments[0].color;
+  const colN = charSegments[charSegments.length - 1].color;
+  const alphaBase = numLines <= 1 ? 235 : constrain(235 - numLines * 6, 90, 235);
+
   push();
   noFill();
   strokeWeight(2.8 * s);
 
   for (let n = 0; n < numLines; n++) {
-    for (let si = 0; si < charSegments.length; si++) {
-      const seg = charSegments[si];
-      const nextSeg = charSegments[(si + 1) % charSegments.length];
-      const c1 = seg.color;
-      const c2 = nextSeg.color;
+    // 線ごとの位相オフセット（FontsMotion 方式）
+    const phaseX = cos(n * 0.1);
+    const phaseY = sin(n * 0.1);
 
-      const pts = seg.points;
+    // 色は中央色（先頭〜末尾の中間）を使い、線全体で統一
+    const mr = lerp(col0[0], colN[0], 0.5);
+    const mg = lerp(col0[1], colN[1], 0.5);
+    const mb = lerp(col0[2], colN[2], 0.5);
+    stroke(mr, mg, mb, alphaBase);
 
-      const mr = lerp(c1[0], c2[0], 0.5);
-      const mg = lerp(c1[1], c2[1], 0.5);
-      const mb = lerp(c1[2], c2[2], 0.5);
-      // 線が増えたら1本あたりの不透明度を落として重なりを活かす
-      const alphaBase = numLines <= 1 ? 235 : constrain(235 - numLines * 6, 90, 235);
-      stroke(mr, mg, mb, alphaBase);
-
-      beginShape();
-      for (let j = 0; j < pts.length; j++) {
-        // FontsMotion: 点インデックスに沿った進行波。線ごとに位相をずらす
-        const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
-        const wx = cos(n * 0.1) * wave;
-        const wy = sin(n * 0.1) * wave;
-        curveVertex(pts[j].x + wx, pts[j].y + wy);
-      }
-      endShape();
-
-      // 次の文字への接続線（波は同じ進行で）
-      if (charSegments.length > 1 && pts.length > 0 && nextSeg.points.length > 0) {
-        const from = pts[pts.length - 1];
-        const to = nextSeg.points[0];
-        const steps = 20;
-        for (let j = 0; j < steps; j++) {
-          const tt = j / steps;
-          const r = lerp(c1[0], c2[0], tt);
-          const g = lerp(c1[1], c2[1], tt);
-          const b = lerp(c1[2], c2[2], tt);
-          stroke(r, g, b, alphaBase * (1 - tt * 0.4));
-          const wave = sin((j / pts.length) * PI * 2 * waveNum + waveT) * waveHeight;
-          const wx = cos(n * 0.1) * wave;
-          const wy = sin(n * 0.1) * wave;
-          const x1 = lerp(from.x, to.x, tt) + wx;
-          const y1 = lerp(from.y, to.y, tt) + wy;
-          const x2 = lerp(from.x, to.x, (j + 1) / steps) + wx;
-          const y2 = lerp(from.y, to.y, (j + 1) / steps) + wy;
-          line(x1, y1, x2, y2);
-        }
-      }
+    beginShape();
+    // curveVertex は最初と最後に制御点が必要
+    for (let j = 0; j < allPts.length; j++) {
+      const wave = sin((j / allPts.length) * PI * 2 * waveNum + waveT) * waveHeight;
+      curveVertex(allPts[j].x + phaseX * wave, allPts[j].y + phaseY * wave);
     }
+    endShape();
   }
 
   pop();
