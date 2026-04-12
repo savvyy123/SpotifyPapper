@@ -534,11 +534,7 @@ let fontFxPattern = 0;
 let fontFxIntensity = 0;     // 0〜1 でスムージング
 let fontFxTargetIntensity = 0;
 let fontFxLastBeat = 0;
-let invertMode = false;      // 色反転モード（4拍持続）
-let flashUntil = 0;          // フラッシュ終了時刻（この時刻まで高速点滅）
-let lastFlashBeat = -1;      // 最後にフラッシュ抽選した拍
-const FLASH_DURATION_MS = 600;  // フラッシュ持続（この間に複数回反転）
-const FLASH_INTERVAL_MS = 60;   // 高速反転の間隔（約16Hz）
+let invertMode = false;      // 色反転モード（スペースキーでトグル）
 
 function updateFontFx() {
   const bpm = Spotify.getBPM();
@@ -557,16 +553,7 @@ function updateFontFx() {
       fontFxPattern = 1 + floor(random(FONT_FX_PATTERNS - 1));
       fontFxTargetIntensity = random(0.7, 1.0);
     }
-    invertMode = random() < 0.05;
-  }
-
-  // ビートごとにフラッシュ抽選（5%）
-  const beatIndex = floor(now / beatInterval);
-  if (beatIndex !== lastFlashBeat) {
-    lastFlashBeat = beatIndex;
-    if (random() < 0.05) {
-      flashUntil = now + FLASH_DURATION_MS;
-    }
+    // invertMode は手動（スペースキー）でのみ切り替える
   }
 
   // BPMの拍に合わせてインテンシティをパルスさせる
@@ -575,15 +562,8 @@ function updateFontFx() {
   fontFxIntensity = lerp(fontFxIntensity, fontFxTargetIntensity * (0.5 + pulse * 0.5), 0.1);
 }
 
-// 反転状態の最終判定: 持続反転 XOR フラッシュ（フラッシュ中は高速に反転を繰り返す）
 function isInverted() {
-  const now = millis();
-  let flashing = false;
-  if (now < flashUntil) {
-    // フラッシュ中: FLASH_INTERVAL_MS ごとにトグル
-    flashing = Math.floor(now / FLASH_INTERVAL_MS) % 2 === 0;
-  }
-  return invertMode !== flashing;
+  return invertMode;
 }
 
 function drawTrackChars() {
@@ -958,6 +938,8 @@ function keyPressed() {
   } else if (key === 'r' || key === 'R') {
     const track = Spotify.getTrackName();
     if (track) generateTrackChars(track);
+  } else if (key === ' ') {
+    invertMode = !invertMode;
   }
   return false;
 }
