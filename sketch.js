@@ -740,8 +740,9 @@ function layoutLyricsSquares(left, top, size, text) {
   const smallMax = baseSize * 1.1;
   const headMin  = baseSize * 1.35;
   const headMax  = baseSize * 1.7;
-  const wordGap  = baseSize * (isEnglish ? 0.1 : 0.55); // 単語間のスペース幅
+  const wordGap  = baseSize * (isEnglish ? 0.55 : 0.55); // 単語間のスペース幅
   const lineGap  = baseSize * (isEnglish ? 0.75 : 0.25); // 英語は行間を広く
+  const charPitch = isEnglish ? 0.68 : 1.0; // 単語内文字ピッチ係数（英語は詰める）
 
   // 各単語のグリフ情報を事前に作成（単語内詰め配置）
   const wordBlocks = words.map(w => {
@@ -750,9 +751,11 @@ function layoutLyricsSquares(left, top, size, text) {
       if (i === 0) return headMin + Math.random() * (headMax - headMin);
       return smallMin + Math.random() * (smallMax - smallMin);
     });
-    const width = sizes.reduce((s, v) => s + v, 0);
+    // 各文字の前進幅 = サイズ × ピッチ係数（英語時に文字を詰める）
+    const advances = sizes.map(s => s * charPitch);
+    const width = advances.reduce((s, v) => s + v, 0);
     const height = Math.max(...sizes);
-    return { chars, sizes, width, height };
+    return { chars, sizes, advances, width, height };
   });
 
   // 単語単位で折り返し
@@ -815,15 +818,16 @@ function layoutLyricsSquares(left, top, size, text) {
       const wb = wordBlocks[r[k]];
       for (let i = 0; i < wb.chars.length; i++) {
         const sz = wb.sizes[i] * scale;
+        const adv = wb.advances[i] * scale;
         const maxJitter = (rowH - sz) * 0.5 + sz * 0.15;
         const jitter = (Math.random() * 2 - 1) * maxJitter;
         glyphs.push({
           ch: wb.chars[i],
-          x: x + sz / 2,
+          x: x + adv / 2,
           y: centerY + jitter,
           size: sz,
         });
-        x += sz;
+        x += adv;
       }
       if (k < r.length - 1) x += scaledWordGap;
     }
