@@ -10,30 +10,6 @@ const SerialControl = (() => {
   let reader = null;
   let connectBtn = null;
 
-  // ---------------------------------------------------------------
-  // 接続ボタンを画面に追加
-  // ---------------------------------------------------------------
-  function createButton() {
-    connectBtn = document.createElement('button');
-    connectBtn.id = 'serial-connect-btn';
-    connectBtn.textContent = '🔌 Arduino接続';
-    Object.assign(connectBtn.style, {
-      position:     'fixed',
-      bottom:       '20px',
-      right:        '20px',
-      zIndex:       '9999',
-      padding:      '10px 18px',
-      fontSize:     '14px',
-      fontFamily:   'sans-serif',
-      background:   'rgba(0,0,0,0.7)',
-      color:        '#fff',
-      border:       '1px solid #fff',
-      borderRadius: '6px',
-      cursor:       'pointer',
-    });
-    connectBtn.addEventListener('click', connect);
-    document.body.appendChild(connectBtn);
-  }
 
   // ---------------------------------------------------------------
   // Web Serial 接続
@@ -48,10 +24,6 @@ const SerialControl = (() => {
       port = await navigator.serial.requestPort();
       await port.open({ baudRate: 9600 });
 
-      connectBtn.textContent = '✅ Arduino接続済み';
-      connectBtn.style.borderColor = '#4caf50';
-      connectBtn.style.color = '#4caf50';
-      connectBtn.removeEventListener('click', connect);
 
       readLoop();
     } catch (e) {
@@ -118,7 +90,6 @@ const SerialControl = (() => {
   // 初期化
   // ---------------------------------------------------------------
   function init() {
-    createButton();
     setupKeyListener();
   }
 
