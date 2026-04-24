@@ -22,7 +22,7 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // ---- ボタン ----
-const int BUTTON_PIN = 7;
+const int BUTTON_PIN = 4;
 const unsigned long DEBOUNCE_MS   = 50;
 const unsigned long TAP_WINDOW_MS = 400;
 
