@@ -40,6 +40,11 @@ bool buttonState = HIGH;
 String rxBuffer = "";
 String currentTrack = "No Track";
 
+// ---- BPM 連動LED ----
+float currentBpm = 0;          // 0なら点滅停止
+unsigned long lastBeatTime = 0;
+const unsigned long FLASH_MS = 80; // 1拍あたりの点灯時間
+
 void showTrack(const String& name) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -90,8 +95,21 @@ void loop() {
         lastTapTime = millis();
       }
     }
-    // ボタン押下中はLED点灯
-    digitalWrite(LED_PIN, (buttonState == LOW) ? HIGH : LOW);
+  }
+
+  // --- LED制御: 押下中=点灯 / それ以外=BPMで点滅 ---
+  if (buttonState == LOW) {
+    digitalWrite(LED_PIN, HIGH);
+  } else if (currentBpm > 0) {
+    unsigned long beatInterval = (unsigned long)(60000.0 / currentBpm);
+    unsigned long now = millis();
+    if (now - lastBeatTime >= beatInterval) {
+      lastBeatTime = now;
+    }
+    bool flashOn = (now - lastBeatTime) < FLASH_MS;
+    digitalWrite(LED_PIN, flashOn ? HIGH : LOW);
+  } else {
+    digitalWrite(LED_PIN, LOW);
   }
 
   if (tapCount > 0 && millis() - lastTapTime > TAP_WINDOW_MS) {
@@ -100,13 +118,18 @@ void loop() {
     tapCount = 0;
   }
 
-  // --- シリアル受信 ("T:<曲名>\n") ---
+  // --- シリアル受信 ---
+  // "T:<曲名>\n"  → OLEDに曲名表示
+  // "B:<bpm>\n"   → LED点滅BPMを更新（0で停止）
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n') {
       if (rxBuffer.startsWith("T:")) {
         currentTrack = rxBuffer.substring(2);
         showTrack(currentTrack);
+      } else if (rxBuffer.startsWith("B:")) {
+        currentBpm = rxBuffer.substring(2).toFloat();
+        lastBeatTime = millis(); // 新BPMで拍をリセット
       }
       rxBuffer = "";
     } else if (c != '\r') {
