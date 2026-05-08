@@ -1,11 +1,14 @@
-// button.ino — タクトスイッチ + SSD1306 OLED (Arduino Pro Micro)
+// button.ino — タクトスイッチ + LED + SSD1306 OLED (Arduino Pro Micro / Uno)
 //
-// スイッチ (PIN 7 ↔ GND, INPUT_PULLUP):
+// スイッチ (PIN 4 ↔ GND, INPUT_PULLUP):
+//   押下中 → PIN 5 のLEDが点灯
 //   1回押し → Serial送信: "1"  → 再生/一時停止
 //   2回押し → Serial送信: "2"  → 次の曲
 //   3回押し → Serial送信: "3"  → 前の曲
 //
-// OLED (SSD1306 128x64, I2C 0x3C, SDA=2 / SCL=3):
+// OLED (SSD1306 128x64, I2C 0x3C):
+//   Pro Micro: SDA=2 / SCL=3
+//   Uno:       SDA=A4 / SCL=A5
 //   PCから "T:<曲名>\n" を受信 → 画面に曲名を表示
 //
 // 必要ライブラリ: Adafruit_GFX, Adafruit_SSD1306
@@ -21,8 +24,9 @@
 #define OLED_ADDR   0x3C
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// ---- ボタン ----
+// ---- ボタン / LED ----
 const int BUTTON_PIN = 4;
+const int LED_PIN    = 5;   // ボタン押下中に点灯
 const unsigned long DEBOUNCE_MS   = 50;
 const unsigned long TAP_WINDOW_MS = 400;
 
@@ -54,6 +58,8 @@ void showTrack(const String& name) {
 void setup() {
   Serial.begin(9600);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
 
   Wire.begin();
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
@@ -84,6 +90,8 @@ void loop() {
         lastTapTime = millis();
       }
     }
+    // ボタン押下中はLED点灯
+    digitalWrite(LED_PIN, (buttonState == LOW) ? HIGH : LOW);
   }
 
   if (tapCount > 0 && millis() - lastTapTime > TAP_WINDOW_MS) {

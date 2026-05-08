@@ -95,6 +95,7 @@ function preload() {
 function setup() {
   updateSizes();
   createCanvas(W, H);
+  pixelDensity(2);
   textFont(FONT_FAMILY);
   frameRate(60);
 
