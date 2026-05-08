@@ -12,7 +12,6 @@ const SerialControl = (() => {
   let writer = null;
   let connectBtn = null;
   let lastSentTrack = '';
-  let lastSentBpm = -1;
 
   // ---------------------------------------------------------------
   // Web Serial 接続
@@ -109,18 +108,7 @@ const SerialControl = (() => {
     }
   }
 
-  // ArduinoにBPMを送信（0で点滅停止）
-  async function sendBpm(bpm) {
-    if (!writer) return;
-    try {
-      await writer.write('B:' + bpm.toFixed(2) + '\n');
-      console.log('[Serial] BPM:', bpm);
-    } catch (e) {
-      console.warn('Serial write error:', e);
-    }
-  }
-
-  // Spotifyの曲名/BPM変化を監視して自動送信
+  // Spotifyの曲名変化を監視して自動送信
   function startTrackSync() {
     setInterval(() => {
       if (!writer) return;
@@ -129,15 +117,6 @@ const SerialControl = (() => {
       if (name !== lastSentTrack) {
         lastSentTrack = name;
         sendTrack(name);
-      }
-
-      // BPM: 再生中ならBPM、停止中は0を送信
-      const isPlaying = Spotify.getIsPlaying ? Spotify.getIsPlaying() : false;
-      const rawBpm = Spotify.getBPM ? Spotify.getBPM() : 0;
-      const bpm = isPlaying ? rawBpm : 0;
-      if (Math.abs(bpm - lastSentBpm) > 0.5) {
-        lastSentBpm = bpm;
-        sendBpm(bpm);
       }
     }, 1000);
   }
